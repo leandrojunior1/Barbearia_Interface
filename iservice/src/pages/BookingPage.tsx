@@ -4,14 +4,42 @@ import Header from "../components/Header";
 import Footer from "../components/Footer";
 import {
   storeRepo, bookingRepo, sessionRepo, buildWhatsAppLink,
-  type Store, type Service, type Professional,
+  type PublicStore, type Service, type Professional,
 } from "../lib/db";
-import { formatPhone } from "../utils/masks";
+import { formatPhone, isValidPhone } from "../utils/masks";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
 const WEEKDAY_LABEL = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const MONTH_LABEL = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const EMPTY_PUBLIC_STORE: PublicStore = {
+  id: "",
+  loginId: "",
+  username: "",
+  name: "",
+  category: "",
+  address: "",
+  phone: "",
+  whatsapp: "",
+  status: "pendente",
+  preferredContact: "whatsapp",
+  featured: false,
+  gallery: [],
+  amenities: [],
+  services: [],
+  professionals: [],
+  establishment: { workDays: [], openTime: "08:00", closeTime: "20:00", holidays: [] },
+  customization: {
+    fontFamily: "Work Sans",
+    fontSize: "base",
+    primaryColor: "#2F6B6B",
+    secondaryColor: "#EBF3F3",
+    cardStyle: "quadrado",
+    cardFill: "solido",
+  },
+  financeClosingDay: 0,
+  createdAt: "",
+};
 
 function toISODate(d: Date) {
   const year = d.getFullYear();
@@ -22,8 +50,9 @@ function toISODate(d: Date) {
 
 function nextDays(n: number) {
   const out: Date[] = [];
+  const today = new Date();
   for (let i = 0; i < n; i++) {
-    const d = new Date();
+    const d = new Date(today);
     d.setDate(d.getDate() + i);
     out.push(d);
   }
@@ -38,25 +67,37 @@ function formatDuration(totalMinutes: number) {
   return `${hrs}h ${mins}min`;
 }
 
-function generateTimesForDay(store: Store, pro: Professional, date: string, durationMin: number): string[] {
+function generateTimesForDay(
+  store: Pick<PublicStore, "id" | "establishment">,
+  pro: Professional,
+  date: string,
+  durationMin: number,
+): string[] {
   const [sh, sm] = pro.workStart.split(":").map(Number);
   const [eh, em] = pro.workEnd.split(":").map(Number);
   const [bh1, bm1] = pro.breakStart.split(":").map(Number);
   const [bh2, bm2] = pro.breakEnd.split(":").map(Number);
-  const start = sh * 60 + sm;
-  const end = eh * 60 + em;
+  const [openingHour, openingMinute] = store.establishment.openTime.split(":").map(Number);
+  const [closingHour, closingMinute] = store.establishment.closeTime.split(":").map(Number);
+  const start = Math.max(sh * 60 + sm, openingHour * 60 + openingMinute);
+  const end = Math.min(eh * 60 + em, closingHour * 60 + closingMinute);
   const breakStart = bh1 * 60 + bm1;
   const breakEnd = bh2 * 60 + bm2;
   const step = 30;
   const slots: string[] = [];
+  const today = toISODate(new Date());
+  const isToday = date === today;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
   for (let m = start; m + durationMin <= end; m += step) {
     if (m < breakEnd && m + durationMin > breakStart) continue;
+    if (isToday && m <= currentMinutes) continue;
     const h = String(Math.floor(m / 60)).padStart(2, "0");
     const mm = String(m % 60).padStart(2, "0");
     const time = `${h}:${mm}`;
 
-    if (!bookingRepo.isSlotTaken(store.id, pro.id, date, time)) {
+    if (!bookingRepo.isSlotTaken(store.id, pro.id, date, m, durationMin)) {
       slots.push(time);
     }
   }
@@ -66,7 +107,7 @@ function generateTimesForDay(store: Store, pro: Professional, date: string, dura
 export default function BookingPage() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const store = slug ? storeRepo.getById(slug) : undefined;
+  const store = slug ? storeRepo.getPublicById(slug) : undefined;
 
   const [step, setStep] = useState<Step>(1);
 
@@ -78,60 +119,78 @@ export default function BookingPage() {
 
   const [success, setSuccess] = useState(false);
   const [needsLogin, setNeedsLogin] = useState(false);
-  const [loginDetails, setLoginDetails] = useState({ name: "", phone: "" });
+  const [loginDetails, setLoginDetails] = useState<{
+    name: string;
+    phone: string;
+    preferredContact: "whatsapp" | "sms" | "email";
+  }>({
+    name: "",
+    phone: "",
+    preferredContact: "whatsapp" as const,
+  });
   const [loginError, setLoginError] = useState("");
+  const [bookingError, setBookingError] = useState("");
 
+  const loadedStore = store ?? EMPTY_PUBLIC_STORE;
   const days = useMemo(() => nextDays(14), []);
-
-  if (!store || store.availabilityStatus === "Inativo") {
-    return (
-      <div className="min-h-screen flex flex-col">
-        <Header />
-        <div className="flex-1 flex items-center justify-center text-gray-400 text-sm py-24">
-          Estabelecimento não encontrado ou indisponível.
-        </div>
-        <Footer />
-      </div>
+  const totalCartPrice = useMemo(
+    () => cartItems.reduce((total, item) => total + (Number.isFinite(item.price) ? item.price : 0), 0),
+    [cartItems],
+  );
+  const totalCartDuration = useMemo(
+    () => cartItems.reduce((total, item) => total + (Number.isFinite(item.duration) ? item.duration : 0), 0),
+    [cartItems],
+  );
+  const availableProfessionals = useMemo(() => {
+    if (cartItems.length === 0) return loadedStore.professionals;
+    return loadedStore.professionals.filter((professional) =>
+      cartItems.every((service) => professional.serviceIds.includes(service.id)),
     );
-  }
+  }, [cartItems, loadedStore.professionals]);
+  const availableTimes = useMemo(() => {
+    if (!store || !selectedProfessional || !selectedDate || totalCartDuration <= 0) return [];
+    return generateTimesForDay(loadedStore, selectedProfessional, selectedDate, totalCartDuration);
+  }, [loadedStore, selectedDate, selectedProfessional, store, totalCartDuration]);
+  const morningTimes = useMemo(
+    () => availableTimes.filter((time) => Number(time.split(":")[0]) < 12),
+    [availableTimes],
+  );
+  const afternoonTimes = useMemo(
+    () => availableTimes.filter((time) => {
+      const hour = Number(time.split(":")[0]);
+      return hour >= 12 && hour < 18;
+    }),
+    [availableTimes],
+  );
+  const nightTimes = useMemo(
+    () => availableTimes.filter((time) => Number(time.split(":")[0]) >= 18),
+    [availableTimes],
+  );
 
-  const loadedStore: Store = store;
-  const cust = loadedStore.customization || {
-    fontFamily: "Work Sans",
-    fontSize: "base",
-    primaryColor: "#2F6B6B",
-    secondaryColor: "#EBF3F3",
-    cardStyle: "quadrado",
-    cardFill: "solido"
-  };
-
+  const cust = loadedStore.customization;
   const primaryColor = cust.primaryColor || "#2F6B6B";
   const secondaryColor = cust.secondaryColor || "#EBF3F3";
   const cardBorderRadius = cust.cardStyle === "quadrado" ? "12px" : cust.cardStyle === "circular" ? "50%" : "50% 50% 0 0";
   const buttonBg = cust.cardFill === "gradient" ? `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})` : primaryColor;
 
-  // Cálculos da Sacola
-  const totalCartPrice = useMemo(() => cartItems.reduce((acc, item) => acc + item.price, 0), [cartItems]);
-  const totalCartDuration = useMemo(() => cartItems.reduce((acc, item) => acc + item.duration, 0), [cartItems]);
-
-  // Filtragem de profissionais que atendem a TODOS os serviços selecionados na sacola (ou pelo menos um deles)
-  const availableProfessionals = useMemo(() => {
-    if (cartItems.length === 0) return loadedStore.professionals;
-    return loadedStore.professionals.filter(p =>
-      cartItems.some(service => p.serviceIds.includes(service.id))
+  if (!store) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Header />
+        <div className="flex-1 flex flex-col items-center justify-center text-gray-500 text-sm py-24 text-center px-4">
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Estabelecimento indisponível ou inativo</h2>
+          <p className="text-sm text-gray-400 mb-6">Esta barbearia ou salão pode estar temporariamente desativado na plataforma.</p>
+          <button
+            onClick={() => navigate("/")}
+            className="px-5 py-2.5 rounded-xl bg-[#2F6B6B] text-white text-sm font-semibold"
+          >
+            Voltar ao início
+          </button>
+        </div>
+        <Footer />
+      </div>
     );
-  }, [cartItems, loadedStore.professionals]);
-
-  const availableTimes = selectedProfessional && selectedDate && totalCartDuration > 0
-    ? generateTimesForDay(loadedStore, selectedProfessional, selectedDate, totalCartDuration)
-    : [];
-
-  const morningTimes = availableTimes.filter(time => Number(time.split(":")[0]) < 12);
-  const afternoonTimes = availableTimes.filter(time => {
-    const hour = Number(time.split(":")[0]);
-    return hour >= 12 && hour < 18;
-  });
-  const nightTimes = availableTimes.filter(time => Number(time.split(":")[0]) >= 18);
+  }
 
   function toggleService(service: Service) {
     setCartItems(prev => {
@@ -168,6 +227,7 @@ export default function BookingPage() {
 
   function handleSelectTime(timeStr: string) {
     setSelectedTime(timeStr);
+    setBookingError("");
     const current = sessionRepo.get();
     if (!current || current.type !== "client") {
       setNeedsLogin(true);
@@ -179,11 +239,20 @@ export default function BookingPage() {
 
   function handleInlineLogin() {
     setLoginError("");
-    if (!loginDetails.name.trim() || loginDetails.phone.replace(/\D/g, "").length < 10) {
-      setLoginError("Preencha o nome completo e um telefone válido com DDD.");
+    if (!loginDetails.name.trim()) {
+      setLoginError("Informe seu nome completo.");
       return;
     }
-    sessionRepo.set({ type: "client", name: loginDetails.name, phone: loginDetails.phone });
+    if (!isValidPhone(loginDetails.phone)) {
+      setLoginError("Informe um telefone válido com DDD (10 ou 11 dígitos).");
+      return;
+    }
+    sessionRepo.set({
+      type: "client",
+      name: loginDetails.name.trim(),
+      phone: loginDetails.phone,
+      preferredContact: loginDetails.preferredContact,
+    });
     setNeedsLogin(false);
   }
 
@@ -191,18 +260,49 @@ export default function BookingPage() {
     const current = sessionRepo.get();
     if (!current || cartItems.length === 0 || !selectedProfessional || !selectedDate || !selectedTime) return;
 
-    // Salvar cada item da sacola como agendamento vinculado ou como pacote unificado
+    const [startHour, startMinute] = selectedTime.split(":").map(Number);
+    const startMinutes = startHour * 60 + startMinute;
+    const today = toISODate(new Date());
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    if (selectedDate < today || (selectedDate === today && startMinutes <= currentMinutes)) {
+      setBookingError("Este horário já passou. Escolha outro horário disponível.");
+      setSelectedTime(null);
+      setStep(4);
+      return;
+    }
+    if (
+      bookingRepo.isSlotTaken(
+        loadedStore.id,
+        selectedProfessional.id,
+        selectedDate,
+        startMinutes,
+        totalCartDuration,
+      )
+    ) {
+      setBookingError("Este horário acabou de ser reservado. Escolha outro horário disponível.");
+      setSelectedTime(null);
+      setStep(4);
+      return;
+    }
+
+    const endMinutes = startMinutes + totalCartDuration;
+    const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
     const serviceNamesSummary = cartItems.map(s => s.name).join(" + ");
 
     bookingRepo.save({
       id: crypto.randomUUID(),
       storeId: loadedStore.id,
-      serviceId: cartItems[0].id, // Principal referência
+      serviceId: cartItems[0].id,
+      items: cartItems.map(({ id, name, price, duration }) => ({ id, name, price, duration })),
+      durationMin: totalCartDuration,
+      endTime,
       professionalId: selectedProfessional.id,
       date: selectedDate,
       time: selectedTime,
       clientName: current.name,
       clientPhone: current.phone ?? "",
+      preferredContact: current.preferredContact ?? "whatsapp",
       status: "confirmado",
       price: totalCartPrice,
       createdAt: new Date().toISOString(),
@@ -210,7 +310,7 @@ export default function BookingPage() {
 
     const message = `Olá! Confirmando meu agendamento em ${loadedStore.name}:\n` +
       `Serviços: ${serviceNamesSummary}\nProfissional: ${selectedProfessional.name}\n` +
-      `Data: ${selectedDate}\nHorário: ${selectedTime} (${formatDuration(totalCartDuration)})`;
+      `Data: ${selectedDate}\nHorário: ${selectedTime} às ${endTime} (${formatDuration(totalCartDuration)})`;
     window.open(buildWhatsAppLink(loadedStore.whatsapp, message), "_blank");
 
     setSuccess(true);
@@ -222,6 +322,7 @@ export default function BookingPage() {
     if (!selectedProfessional || totalCartDuration === 0) return false;
     const iso = toISODate(d);
     if (loadedStore.establishment.holidays.includes(iso)) return false;
+    if (!loadedStore.establishment.workDays.includes(d.getDay())) return false;
     if (!selectedProfessional.workDays.includes(d.getDay())) return false;
     return generateTimesForDay(loadedStore, selectedProfessional, iso, totalCartDuration).length > 0;
   };
@@ -254,6 +355,15 @@ export default function BookingPage() {
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-1" style={{ color: primaryColor }}>{loadedStore.name}</h1>
           <p className="text-sm text-gray-500">{loadedStore.category} · {loadedStore.address}</p>
+          {loadedStore.amenities.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {loadedStore.amenities.map(amenity => (
+                <span key={amenity} className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
+                  ✓ {amenity}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -282,10 +392,19 @@ export default function BookingPage() {
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {loadedStore.services.map(s => {
                   const isSelected = cartItems.some(item => item.id === s.id);
+                  const validPrice = Number.isFinite(s.price) && s.price >= 0;
+                  const validDuration = Number.isFinite(s.duration) && s.duration > 0;
                   return (
                     <div
                       key={s.id}
-                      onClick={() => toggleService(s)}
+                      onClick={() => {
+                        if (!validPrice || !validDuration) {
+                          setBookingError("Este serviço está com preço ou duração inválidos. Entre em contato com o estabelecimento.");
+                          return;
+                        }
+                        setBookingError("");
+                        toggleService(s);
+                      }}
                       className="text-left p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between"
                       style={{
                         borderRadius: cardBorderRadius,
@@ -299,10 +418,12 @@ export default function BookingPage() {
                         <p className="font-medium text-gray-800 text-sm">{s.name}</p>
                         <div className="flex items-center gap-3 mt-1">
                           <span className="text-xs text-gray-400">{s.duration} min</span>
-                          <span className="text-sm font-semibold" style={{ color: primaryColor }}>R$ {s.price.toFixed(2)}</span>
+                          <span className="text-sm font-semibold" style={{ color: primaryColor }}>
+                            {validPrice ? `R$ ${s.price.toFixed(2)}` : "Preço indisponível"}
+                          </span>
                         </div>
                       </div>
-                      <div className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-colors ${isSelected ? "border-brand [#2F6B6B] border-[#2F6B6B] text-white" : "border-gray-300 bg-white"}`}>
+                      <div className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-colors ${isSelected ? "border-[#2F6B6B] bg-[#2F6B6B] text-white" : "border-gray-300 bg-white"}`}>
                         {isSelected && <span className="text-xs font-bold">✓</span>}
                       </div>
                     </div>
@@ -366,6 +487,7 @@ export default function BookingPage() {
             </div>
             {step === 4 && (
               <div className="mt-3 bg-white rounded-xl border border-gray-100 p-6 space-y-6">
+                {bookingError && <p role="alert" className="text-sm text-red-600">{bookingError}</p>}
                 {availableTimes.length === 0 ? (
                   <p className="text-sm text-gray-400">Nenhum horário disponível para esta carga horária nesta data.</p>
                 ) : (
@@ -418,15 +540,30 @@ export default function BookingPage() {
                     placeholder="Nome completo"
                     value={loginDetails.name}
                     onChange={e => setLoginDetails(p => ({ ...p, name: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-brand [#2F6B6B]"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#2F6B6B]"
                   />
                   <input
                     placeholder="Celular (ex: (11) 99999-9999)"
                     value={loginDetails.phone}
                     onChange={e => setLoginDetails(p => ({ ...p, phone: formatPhone(e.target.value) }))}
                     maxLength={15}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-brand [#2F6B6B]"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#2F6B6B]"
                   />
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Preferência de contato
+                    <select
+                      value={loginDetails.preferredContact}
+                      onChange={e => setLoginDetails(p => ({
+                        ...p,
+                        preferredContact: e.target.value as "whatsapp" | "sms" | "email",
+                      }))}
+                      className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-normal"
+                    >
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="sms">SMS</option>
+                      <option value="email">E-mail</option>
+                    </select>
+                  </label>
                   {loginError && <p className="text-xs text-red-500 font-medium">{loginError}</p>}
                   <button
                     onClick={handleInlineLogin}
@@ -448,7 +585,7 @@ export default function BookingPage() {
                       {cartItems.map(item => (
                         <li key={item.id} className="text-sm font-medium text-gray-800 flex justify-between">
                           <span>• {item.name} ({item.duration} min)</span>
-                          <span>R$ {item.price.toFixed(2)}</span>
+                          <span>{Number.isFinite(item.price) ? `R$ ${item.price.toFixed(2)}` : "Preço indisponível"}</span>
                         </li>
                       ))}
                     </ul>

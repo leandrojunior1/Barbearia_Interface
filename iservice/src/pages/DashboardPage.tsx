@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import ToastContainer, { type ToastMessage } from "../components/Toast";
 import {
   storeRepo,
   bookingRepo,
@@ -12,7 +13,7 @@ import {
   type Booking,
 } from "../lib/db";
 
-type Tab = "agendamentos" | "estabelecimento" | "servicos" | "profissionais" | "customizacao" | "financeiro" | "suporte";
+type Tab = "agendamentos" | "estabelecimento" | "servicos" | "profissionais" | "customizacao" | "financeiro" | "galeria" | "comodidades" | "suporte";
 
 const NAV_ITEMS: { key: Tab; label: string; icon: string }[] = [
   { key: "agendamentos", label: "Agendamentos", icon: "📅" },
@@ -21,13 +22,21 @@ const NAV_ITEMS: { key: Tab; label: string; icon: string }[] = [
   { key: "profissionais", label: "Profissionais", icon: "👤" },
   { key: "customizacao", label: "Customização", icon: "🎨" },
   { key: "financeiro", label: "Financeiro", icon: "💰" },
+  { key: "galeria", label: "Galeria", icon: "🖼️" },
+  { key: "comodidades", label: "Comodidades", icon: "☕" },
   { key: "suporte", label: "Suporte", icon: "🎧" },
 ];
 
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const STATUS_COLORS: Record<string, string> = { confirmado: "bg-green-50 text-green-700", cancelado: "bg-red-50 text-red-600" };
 
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+function todayISO() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 function OverviewPanel({ store, bookings }: { store: Store; bookings: Booking[] }) {
   const today = todayISO();
@@ -40,11 +49,12 @@ function OverviewPanel({ store, bookings }: { store: Store; bookings: Booking[] 
           <div className="space-y-2">
             {todaysBookings.map(b => {
               const service = store.services.find(s => s.id === b.serviceId);
+              const serviceNames = b.items?.map(item => item.name).join(", ") || service?.name || "—";
               const pro = store.professionals.find(p => p.id === b.professionalId);
               return (
                 <div key={b.id} className="flex justify-between text-sm border-b border-gray-50 pb-1.5 last:border-0">
-                  <span className="text-gray-700">{b.time} — {b.clientName}</span>
-                  <span className="text-gray-400 text-xs">{service?.name} · {pro?.name}</span>
+                  <span className="text-gray-700">{b.time}{b.endTime ? `–${b.endTime}` : ""} — {b.clientName}</span>
+                  <span className="text-gray-400 text-xs">{serviceNames} · {pro?.name}</span>
                 </div>
               );
             })}
@@ -89,13 +99,14 @@ function AgendamentosTab({ store, bookings, onCancel }: { store: Store; bookings
             {filtered.length === 0 && <tr><td colSpan={7} className="text-center text-gray-400 text-sm py-8">Nenhum agendamento ainda.</td></tr>}
             {filtered.map(b => {
               const service = store.services.find(s => s.id === b.serviceId);
+              const serviceNames = b.items?.map(item => item.name).join(", ") || service?.name || "—";
               const pro = store.professionals.find(p => p.id === b.professionalId);
               return (
                 <tr key={b.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
                   <td className="px-4 py-3 text-gray-600">{b.date}</td>
-                  <td className="px-4 py-3 font-medium text-gray-800">{b.time}</td>
+                  <td className="px-4 py-3 font-medium text-gray-800">{b.time}{b.endTime ? `–${b.endTime}` : ""}</td>
                   <td className="px-4 py-3 text-gray-700">{b.clientName}</td>
-                  <td className="px-4 py-3 text-gray-600">{service?.name ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-600">{serviceNames}</td>
                   <td className="px-4 py-3 text-gray-600">{pro?.name ?? "—"}</td>
                   <td className="px-4 py-3"><span className={`px-2.5 py-1 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[b.status]}`}>{b.status}</span></td>
                   <td className="px-4 py-3">{b.status === "confirmado" && <button onClick={() => onCancel(b.id)} className="text-xs text-red-500 hover:underline">Cancelar</button>}</td>
@@ -156,8 +167,11 @@ function ServicosTab({ store, onSave }: { store: Store; onSave: (patch: Partial<
   const [form, setForm] = useState({ name: "", duration: "", price: "" });
 
   function add() {
-    if (!form.name || !form.duration || !form.price) return;
-    const next = [...services, { id: crypto.randomUUID(), name: form.name, duration: Number(form.duration), price: Number(form.price) }];
+    const name = form.name.trim();
+    const duration = Number(form.duration);
+    const price = Number(form.price);
+    if (!name || !Number.isFinite(duration) || duration <= 0 || !Number.isFinite(price) || price < 0) return;
+    const next = [...services, { id: crypto.randomUUID(), name, duration, price }];
     setServices(next); onSave({ services: next }); setForm({ name: "", duration: "", price: "" });
   }
   function remove(id: string) { const next = services.filter(s => s.id !== id); setServices(next); onSave({ services: next }); }
@@ -178,7 +192,7 @@ function ServicosTab({ store, onSave }: { store: Store; onSave: (patch: Partial<
         {services.length === 0 && <p className="p-6 text-sm text-gray-400 text-center">Nenhum serviço cadastrado ainda.</p>}
         {services.map(s => (
           <div key={s.id} className="flex items-center justify-between px-5 py-3">
-            <div><p className="text-sm font-medium text-gray-800">{s.name}</p><p className="text-xs text-gray-400">{s.duration} min · R$ {s.price.toFixed(2)}</p></div>
+            <div><p className="text-sm font-medium text-gray-800">{s.name}</p><p className="text-xs text-gray-400">{s.duration} min · {Number.isFinite(s.price) ? `R$ ${s.price.toFixed(2)}` : "Preço inválido"}</p></div>
             <button onClick={() => remove(s.id)} className="text-xs text-red-500 hover:underline">Remover</button>
           </div>
         ))}
@@ -247,8 +261,8 @@ function FinanceiroTab({ store, bookings, onSave }: { store: Store; bookings: Bo
   const msWeek = 7 * 24 * 60 * 60 * 1000;
   const thisWeek = confirmed.filter(b => now.getTime() - new Date(b.date).getTime() < msWeek);
   const lastWeek = confirmed.filter(b => { const diff = now.getTime() - new Date(b.date).getTime(); return diff >= msWeek && diff < msWeek * 2; });
-  const totalThis = thisWeek.reduce((s, b) => s + b.price, 0);
-  const totalLast = lastWeek.reduce((s, b) => s + b.price, 0);
+  const totalThis = thisWeek.reduce((sum, booking) => sum + (Number.isFinite(booking.price) ? booking.price : 0), 0);
+  const totalLast = lastWeek.reduce((sum, booking) => sum + (Number.isFinite(booking.price) ? booking.price : 0), 0);
   const change = totalLast > 0 ? Math.round(((totalThis - totalLast) / totalLast) * 100) : totalThis > 0 ? 100 : 0;
 
   return (
@@ -277,10 +291,11 @@ function FinanceiroTab({ store, bookings, onSave }: { store: Store; bookings: Bo
           <div className="space-y-3">
             {confirmed.slice(-8).reverse().map(b => {
               const service = store.services.find(s => s.id === b.serviceId);
+              const serviceNames = b.items?.map(item => item.name).join(", ") || service?.name || "Serviço";
               return (
                 <div key={b.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                  <div><p className="text-sm text-gray-700">{service?.name} — {b.clientName}</p><p className="text-xs text-gray-400">{b.date}</p></div>
-                  <p className="text-sm font-semibold text-green-600">+ R$ {b.price.toFixed(2)}</p>
+                  <div><p className="text-sm text-gray-700">{serviceNames} — {b.clientName}</p><p className="text-xs text-gray-400">{b.date}</p></div>
+                  <p className="text-sm font-semibold text-green-600">+ R$ {Number.isFinite(b.price) ? b.price.toFixed(2) : "0.00"}</p>
                 </div>
               );
             })}
@@ -362,22 +377,15 @@ function CustomizacaoTab({ store, onSave }: { store: Store; onSave: (patch: Part
   );
 }
 
-function SuporteTab({ storeId }: { storeId: string }) {
+function SuporteTab({ storeId, onCreated }: { storeId: string; onCreated: () => void }) {
   const [tickets, setTickets] = useState<StoreSupportTicket[]>([]);
   const [subject, setSubject] = useState("");
   const [category, setCategory] = useState("Técnico");
   const [message, setMessage] = useState("");
-  const [successMsg, setSuccessMsg] = useState("");
 
   useEffect(() => {
     setTickets(storeSupportTicketRepo.getByStore(storeId));
   }, [storeId]);
-
-  useEffect(() => {
-    if (!successMsg) return;
-    const timeoutId = window.setTimeout(() => setSuccessMsg(""), 4000);
-    return () => window.clearTimeout(timeoutId);
-  }, [successMsg]);
 
   function handleCreateTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -399,18 +407,13 @@ function SuporteTab({ storeId }: { storeId: string }) {
     setTickets(storeSupportTicketRepo.getByStore(storeId));
     setSubject("");
     setMessage("");
-    setSuccessMsg("Chamado enviado com sucesso! Nossa equipe responderá em breve.");
+    onCreated();
   }
 
   return (
     <div className="space-y-8">
       <section className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
         <h2 className="text-lg font-bold text-gray-900 mb-4">Abrir Novo Chamado de Suporte</h2>
-        {successMsg && (
-          <div role="status" className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl">
-            {successMsg}
-          </div>
-        )}
         <form onSubmit={handleCreateTicket} className="space-y-4 max-w-2xl">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -490,6 +493,14 @@ function SuporteTab({ storeId }: { storeId: string }) {
                   </div>
                   <h3 className="font-bold text-gray-800 text-sm">{ticket.subject}</h3>
                   <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{ticket.message}</p>
+                  {ticket.adminReply && (
+                    <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+                      <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-blue-800">
+                        Resposta da Administração
+                      </p>
+                      <p className="whitespace-pre-wrap text-xs text-blue-900">{ticket.adminReply}</p>
+                    </div>
+                  )}
                 </div>
               </article>
             ))}
@@ -500,6 +511,106 @@ function SuporteTab({ storeId }: { storeId: string }) {
   );
 }
 
+function GaleriaTab({ store, onSave }: { store: Store; onSave: (patch: Partial<Store>) => void }) {
+  const [imageUrl, setImageUrl] = useState("");
+
+  function addImage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const url = imageUrl.trim();
+    if (!url) return;
+    onSave({ gallery: [...store.gallery, url] });
+    setImageUrl("");
+  }
+
+  return (
+    <section className="space-y-6 rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-bold text-gray-900">Galeria do estabelecimento</h2>
+      <form onSubmit={addImage} className="flex max-w-xl gap-3">
+        <input
+          type="url"
+          required
+          aria-label="URL da imagem"
+          placeholder="https://..."
+          value={imageUrl}
+          onChange={(event) => setImageUrl(event.target.value)}
+          className="min-w-0 flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:border-[#2F6B6B] focus:outline-none"
+        />
+        <button type="submit" className="rounded-xl bg-[#2F6B6B] px-5 py-2.5 text-sm font-semibold text-white">
+          Adicionar
+        </button>
+      </form>
+      {store.gallery.length === 0 ? (
+        <p className="py-6 text-center text-sm text-gray-400">Nenhuma imagem adicionada.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {store.gallery.map((image, index) => (
+            <div key={`${image}-${index}`} className="group relative h-36 overflow-hidden rounded-xl border border-gray-200">
+              <img src={image} alt={`Imagem da galeria ${index + 1}`} className="h-full w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => onSave({ gallery: store.gallery.filter((_, itemIndex) => itemIndex !== index) })}
+                className="absolute right-2 top-2 rounded-lg bg-red-600 px-2 py-1 text-xs text-white opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
+              >
+                Remover
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ComodidadesTab({ store, onSave }: { store: Store; onSave: (patch: Partial<Store>) => void }) {
+  const [amenity, setAmenity] = useState("");
+
+  function addAmenity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = amenity.trim();
+    if (!value || store.amenities.includes(value)) return;
+    onSave({ amenities: [...store.amenities, value] });
+    setAmenity("");
+  }
+
+  return (
+    <section className="max-w-2xl space-y-6 rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-bold text-gray-900">Comodidades oferecidas</h2>
+      <form onSubmit={addAmenity} className="flex gap-3">
+        <input
+          required
+          aria-label="Nova comodidade"
+          placeholder="Ex.: Wi-Fi, café, estacionamento"
+          value={amenity}
+          onChange={(event) => setAmenity(event.target.value)}
+          className="min-w-0 flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:border-[#2F6B6B] focus:outline-none"
+        />
+        <button type="submit" className="rounded-xl bg-[#2F6B6B] px-5 py-2.5 text-sm font-semibold text-white">
+          Adicionar
+        </button>
+      </form>
+      {store.amenities.length === 0 ? (
+        <p className="py-4 text-center text-sm text-gray-400">Nenhuma comodidade cadastrada.</p>
+      ) : (
+        <ul className="flex flex-wrap gap-2">
+          {store.amenities.map((item) => (
+            <li key={item} className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 text-sm text-gray-700">
+              {item}
+              <button
+                type="button"
+                aria-label={`Remover ${item}`}
+                onClick={() => onSave({ amenities: store.amenities.filter((current) => current !== item) })}
+                className="font-bold text-gray-400 hover:text-red-600"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function DashboardPage() {
   const { storeId } = useParams();
   const navigate = useNavigate();
@@ -507,6 +618,15 @@ export default function DashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [store, setStore] = useState<Store | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  function addToast(text: string, type: ToastMessage["type"] = "success") {
+    const id = crypto.randomUUID();
+    setToasts((current) => [...current, { id, text, type }]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id));
+    }, 4000);
+  }
 
   function refresh() {
     if (!storeId) return;
@@ -516,9 +636,15 @@ export default function DashboardPage() {
 
   useEffect(() => { refresh(); }, [storeId]);
 
-  function patch(p: Partial<Store>) { if (!storeId) return; storeRepo.update(storeId, p); refresh(); }
+  function patch(p: Partial<Store>) {
+    if (!storeId) return;
+    storeRepo.update(storeId, p);
+    refresh();
+    addToast("Alterações salvas com sucesso.");
+  }
   function cancelBooking(id: string) { bookingRepo.cancel(id); refresh(); }
   function logout() { sessionRepo.clear(); navigate("/"); }
+  function ticketCreated() { addToast("Chamado enviado com sucesso. A equipe responderá em breve."); }
 
   if (!store) {
     return <div className="min-h-screen flex items-center justify-center text-gray-400 text-sm">Loja não encontrada. <Link to="/login" className="text-[#2F6B6B] ml-1">Fazer login</Link></div>;
@@ -531,11 +657,17 @@ export default function DashboardPage() {
     profissionais: <ProfissionaisTab store={store} onSave={patch} />,
     customizacao: <CustomizacaoTab store={store} onSave={patch} />,
     financeiro: <FinanceiroTab store={store} bookings={bookings} onSave={patch} />,
-    suporte: <SuporteTab storeId={store.id} />,
+    galeria: <GaleriaTab store={store} onSave={patch} />,
+    comodidades: <ComodidadesTab store={store} onSave={patch} />,
+    suporte: <SuporteTab storeId={store.id} onCreated={ticketCreated} />,
   }[tab];
 
   return (
     <div className="min-h-screen flex bg-gray-50">
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
+      />
       <aside className={`fixed inset-y-0 left-0 z-40 w-60 bg-white border-r border-gray-100 flex flex-col transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:static lg:translate-x-0`}>
         <div className="p-5 border-b border-gray-100 flex items-center gap-2">
           <span className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{ background: "#2F6B6B" }}>i</span>

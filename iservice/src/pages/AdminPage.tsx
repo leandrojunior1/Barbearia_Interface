@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import ToastContainer, { type ToastMessage } from "../components/Toast";
 import {
   adminRepo,
   adminTicketRepo,
@@ -34,7 +35,17 @@ export default function AdminPage() {
   const [metrics, setMetrics] = useState(() => adminRepo.getGlobalMetrics());
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [reply, setReply] = useState("");
+  const [storeTicketReplies, setStoreTicketReplies] = useState<Record<string, string>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  function addToast(text: string, type: ToastMessage["type"] = "success") {
+    const id = crypto.randomUUID();
+    setToasts((current) => [...current, { id, text, type }]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id));
+    }, 4000);
+  }
 
   function refresh() {
     setStores(storeRepo.getAll());
@@ -53,11 +64,23 @@ export default function AdminPage() {
   function toggleSuspend(s: Store) { storeRepo.update(s.id, { status: s.status === "suspenso" ? "ativo" : "suspenso" }); refresh(); }
   function deactivate(s: Store) { storeRepo.update(s.id, { status: "desativado", deactivatedAt: new Date().toISOString() }); refresh(); }
   function toggleFeatured(s: Store) { storeRepo.update(s.id, { featured: !s.featured }); refresh(); }
-  function toggleAvailability(s: Store) { adminRepo.toggleStoreStatus(s.id); refresh(); }
-  function updatePlan(storeId: string, plan: Plan) { adminRepo.updateStorePlan(storeId, plan); refresh(); }
-  function replyToStoreTicket(ticket: StoreSupportTicket) {
-    adminTicketRepo.replyTicket(ticket.id);
+  function toggleAvailability(s: Store) {
+    adminRepo.toggleStoreStatus(s.id);
     refresh();
+    addToast("Disponibilidade da loja atualizada.");
+  }
+  function updatePlan(storeId: string, plan: Plan) {
+    adminRepo.updateStorePlan(storeId, plan);
+    refresh();
+    addToast(`Plano atualizado para ${plan}.`);
+  }
+  function replyToStoreTicket(ticket: StoreSupportTicket) {
+    const ticketReply = storeTicketReplies[ticket.id]?.trim();
+    if (!ticketReply) return;
+    adminTicketRepo.replyTicket(ticket.id, ticketReply);
+    setStoreTicketReplies((current) => ({ ...current, [ticket.id]: "" }));
+    refresh();
+    addToast("Resposta enviada ao lojista.");
   }
   function addCategory() { if (!newCat.trim()) return; categoriesRepo.add(newCat.trim()); setNewCat(""); refresh(); }
   function removeCategory(name: string) { categoriesRepo.remove(name); refresh(); }
@@ -291,14 +314,38 @@ export default function AdminPage() {
                       </div>
                       <h4 className="font-semibold text-gray-800 text-sm">{ticket.subject}</h4>
                       <p className="text-sm text-gray-600 whitespace-pre-wrap">{ticket.message}</p>
+                      {ticket.adminReply && (
+                        <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+                          <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-blue-800">
+                            Resposta enviada
+                          </p>
+                          <p className="whitespace-pre-wrap text-xs text-blue-900">{ticket.adminReply}</p>
+                        </div>
+                      )}
                     </div>
                     {ticket.status === "Em Aberto" && (
-                      <button
-                        onClick={() => replyToStoreTicket(ticket)}
-                        className="px-4 py-2 text-xs font-semibold text-white bg-[#2F6B6B] hover:opacity-90 rounded-xl transition-opacity shrink-0"
-                      >
-                        Marcar como Respondido
-                      </button>
+                      <div className="w-full shrink-0 space-y-2 sm:w-64">
+                        <label className="sr-only" htmlFor={`reply-${ticket.id}`}>Resposta ao chamado</label>
+                        <textarea
+                          id={`reply-${ticket.id}`}
+                          rows={3}
+                          value={storeTicketReplies[ticket.id] ?? ""}
+                          onChange={(event) => setStoreTicketReplies((current) => ({
+                            ...current,
+                            [ticket.id]: event.target.value,
+                          }))}
+                          placeholder="Escreva uma resposta para o lojista"
+                          className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-[#2F6B6B] focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          disabled={!storeTicketReplies[ticket.id]?.trim()}
+                          onClick={() => replyToStoreTicket(ticket)}
+                          className="w-full rounded-xl bg-[#2F6B6B] px-4 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Enviar resposta
+                        </button>
+                      </div>
                     )}
                   </article>
                 );
@@ -310,17 +357,22 @@ export default function AdminPage() {
     );
   }
 
-  const content = {
-    metricas: <MetricasTab />,
-    aprovacoes: <AprovTab />,
-    lojas: <LojasTab />,
-    destaques: <DestaquesTab />,
-    categorias: <CatsTab />,
-    suporte: <SuporteTab />,
+  const renderTab = {
+    metricas: MetricasTab,
+    aprovacoes: AprovTab,
+    lojas: LojasTab,
+    destaques: DestaquesTab,
+    categorias: CatsTab,
+    suporte: SuporteTab,
   }[tab];
+  const content = renderTab();
 
   return (
     <div className="min-h-screen flex bg-gray-50">
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
+      />
       <aside className={`fixed inset-y-0 left-0 z-40 w-60 bg-[#1a2e2e] flex flex-col transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:static lg:translate-x-0`}>
         <div className="p-5 border-b border-white/10 flex items-center gap-2">
           <span className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs bg-[#2F6B6B]">i</span>

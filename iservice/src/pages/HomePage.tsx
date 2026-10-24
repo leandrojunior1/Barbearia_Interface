@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
-import { storeRepo, type Store } from "../lib/db";
+import { storeRepo, type PublicStore } from "../lib/db";
 
 const FALLBACK_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
@@ -12,7 +12,7 @@ const FALLBACK_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
 </svg>
 `)}`;
 
-function StoreCard({ store, onClick }: { store: Store; onClick: () => void }) {
+function StoreCard({ store, onClick }: { store: PublicStore; onClick: () => void }) {
   const gallery = store.gallery.length > 0 ? store.gallery : [FALLBACK_IMAGE];
   const [imageIndex, setImageIndex] = useState(0);
   const timerRef = useRef<number | undefined>(undefined);
@@ -94,7 +94,7 @@ type GeoState = "pending" | "granted" | "denied";
 
 export default function HomePage() {
   const [search, setSearch] = useState("");
-  const [stores, setStores] = useState<Store[]>([]);
+  const [stores, setStores] = useState<PublicStore[]>([]);
   const [geo, setGeo] = useState<GeoState>("pending");
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();

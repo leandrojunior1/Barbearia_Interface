@@ -130,6 +130,10 @@ export default function ClientProfilePage() {
               const service = store?.services.find(
                 (item) => item.id === booking.serviceId,
               )
+              const serviceNames =
+                booking.items?.map((item) => item.name).join(", ") ||
+                service?.name ||
+                "Serviço"
 
               const professional = store?.professionals.find(
                 (item) => item.id === booking.professionalId,
@@ -163,14 +167,14 @@ export default function ClientProfilePage() {
                       {store?.name || "Estabelecimento"}
                     </h3>
                     <p className="text-sm font-medium text-gray-700">
-                      {service?.name || "Serviço"} com{" "}
+                      {serviceNames} com{" "}
                       <span className="text-[#2F6B6B]">
                         {professional?.name || "Profissional"}
                       </span>
                     </p>
                     <p className="text-xs text-gray-500">
                       📅 {booking.date} às {booking.time} · 💰 R${" "}
-                      {booking.price.toFixed(2)}
+                      {Number.isFinite(booking.price) ? booking.price.toFixed(2) : "—"}
                     </p>
                   </div>
 

@@ -25,14 +25,25 @@ export interface Booking {
   id: string;
   storeId: string;
   serviceId: string;
+  items?: BookingItem[];
+  durationMin?: number;
+  endTime?: string;
   professionalId: string;
   date: string;
   time: string;
   clientName: string;
   clientPhone: string;
-  status: "confirmado" | "cancelado";
+  preferredContact?: "whatsapp" | "sms" | "email";
+  status: "confirmado" | "concluído" | "cancelado";
   price: number;
   createdAt: string;
+}
+
+export interface BookingItem {
+  id: string;
+  name: string;
+  price: number;
+  duration: number;
 }
 
 export interface Customization {
@@ -77,6 +88,8 @@ export interface Store {
   createdAt: string;
 }
 
+export type PublicStore = Omit<Store, "passwordHash">;
+
 export interface Ticket {
   id: string;
   from: string;
@@ -91,15 +104,17 @@ export interface StoreSupportTicket {
   subject: string;
   category: string;
   message: string;
+  adminReply?: string;
   status: "Em Aberto" | "Respondido";
   createdAt: string;
 }
 
 export interface Session {
-  type: "client" | "lojista";
+  type: "client" | "lojista" | "admin";
   name: string;
   email?: string;
   phone?: string;
+  preferredContact?: "whatsapp" | "sms" | "email";
   storeId?: string;
 }
 
@@ -186,10 +201,21 @@ export const storeRepo = {
   getByLoginId(loginId: string): Store | undefined {
     return storeRepo.getAll().find((s) => s.loginId === loginId);
   },
-  getApproved(): Store[] {
+  getApproved(): PublicStore[] {
     return storeRepo
       .getAll()
-      .filter((s) => s.status === "ativo" && s.availabilityStatus !== "Inativo");
+      .filter(isStoreAvailable)
+      .map(({ passwordHash: _passwordHash, ...store }) => store);
+  },
+  getPublicById(id: string): PublicStore | undefined {
+    const store = storeRepo.getById(id);
+    if (!store || !isStoreAvailable(store)) return undefined;
+    const { passwordHash: _passwordHash, ...publicStore } = store;
+    return publicStore;
+  },
+  isAvailable(id: string): boolean {
+    const store = storeRepo.getById(id);
+    return !!store && isStoreAvailable(store);
   },
   getPending(): Store[] {
     return storeRepo.getAll().filter((s) => s.status === "pendente");
@@ -210,6 +236,10 @@ export const storeRepo = {
     write(KEYS.stores, storeRepo.getAll().filter((s) => s.id !== id));
   },
 };
+
+function isStoreAvailable(store: Store): boolean {
+  return store.status === "ativo" && store.availabilityStatus !== "Inativo";
+}
 
 function slugify(name: string): string {
   const base = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
@@ -256,7 +286,7 @@ export async function loginLojista(username: string, password: string, loginId: 
   if (store.username !== username) return null;
   const hash = await hashPassword(password);
   if (hash !== store.passwordHash) return null;
-  if (store.status === "pendente") return null;
+  if (!isStoreAvailable(store)) return null;
   return store;
 }
 
@@ -273,8 +303,35 @@ export const bookingRepo = {
   cancel(id: string) {
     write(KEYS.bookings, bookingRepo.getAll().map((b) => (b.id === id ? { ...b, status: "cancelado" as const } : b)));
   },
-  isSlotTaken(storeId: string, professionalId: string, date: string, time: string): boolean {
-    return bookingRepo.getByStore(storeId).some((b) => b.professionalId === professionalId && b.date === date && b.time === time && b.status === "confirmado");
+  isSlotTaken(
+    storeId: string,
+    professionalId: string,
+    date: string,
+    startMin: number,
+    durationMin: number,
+  ): boolean {
+    const endMin = startMin + durationMin;
+    const services = storeRepo.getById(storeId)?.services ?? [];
+    return bookingRepo.getByStore(storeId).some((booking) => {
+      if (booking.professionalId !== professionalId || booking.date !== date || booking.status !== "confirmado") {
+        return false;
+      }
+
+      const [hours, minutes] = booking.time.split(":").map(Number);
+      const existingStartMin = hours * 60 + minutes;
+      const storedItemsDuration = booking.items?.reduce(
+        (total, item) => total + (Number.isFinite(item.duration) ? item.duration : 0),
+        0,
+      );
+      const existingDuration =
+        booking.durationMin ??
+        (storedItemsDuration && storedItemsDuration > 0 ? storedItemsDuration : undefined) ??
+        services.find((service) => service.id === booking.serviceId)?.duration ??
+        30;
+      const existingEndMin = existingStartMin + existingDuration;
+
+      return startMin < existingEndMin && endMin > existingStartMin;
+    });
   },
 };
 
@@ -334,8 +391,15 @@ export const adminRepo = {
     const storeTickets = storeSupportTicketRepo.getAll();
 
     const totalRevenue = bookings
-      .filter((booking) => booking.status === "confirmado")
-      .reduce((total, booking) => total + booking.price, 0);
+      .filter(
+        (booking) =>
+          booking.status === "confirmado" || booking.status === "concluído",
+      )
+      .reduce(
+        (total, booking) =>
+          total + (Number.isFinite(booking.price) ? booking.price : 0),
+        0,
+      );
 
     const openTickets =
       legacyTickets.filter((ticket) => ticket.status === "aberto").length +
@@ -364,15 +428,23 @@ export const adminRepo = {
 };
 
 export const adminTicketRepo = {
-  replyTicket(ticketId: string) {
+  replyTicket(ticketId: string, reply: string) {
+    const normalizedReply = reply.trim();
+    if (!normalizedReply) return;
     const storeTicket = storeSupportTicketRepo
       .getAll()
       .some((ticket) => ticket.id === ticketId);
     if (storeTicket) {
-      storeSupportTicketRepo.updateStatus(ticketId, "Respondido");
+      const allTickets = storeSupportTicketRepo.getAll();
+      const updatedTickets = allTickets.map((ticket) =>
+        ticket.id === ticketId
+          ? { ...ticket, adminReply: normalizedReply, status: "Respondido" as const }
+          : ticket,
+      );
+      write(KEYS.storeTickets, updatedTickets);
       return;
     }
-    ticketRepo.updateStatus(ticketId, "fechado");
+    ticketRepo.reply(ticketId, "Suporte", normalizedReply);
   },
 };
 
@@ -390,5 +462,6 @@ export const sessionRepo = {
 
 export function buildWhatsAppLink(phone: string, message: string): string {
   const digits = phone.replace(/\D/g, "");
-  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+  const phoneWithCountryCode = digits.startsWith("55") ? digits : `55${digits}`;
+  return `https://wa.me/${phoneWithCountryCode}?text=${encodeURIComponent(message)}`;
 }
