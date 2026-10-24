@@ -7,6 +7,7 @@ import AdminPage from "./pages/AdminPage";
 import ContatoPage from "./pages/ContatoPage";
 import CategoriasPage from "./pages/CategoriasPage";
 import SuportePage from "./pages/SuportePage";
+import ClientProfilePage from "./pages/ClientProfilePage";
 
 export const router = createBrowserRouter([
   { path: "/", Component: HomePage },
@@ -17,4 +18,6 @@ export const router = createBrowserRouter([
   { path: "/contato", Component: ContatoPage },
   { path: "/categorias", Component: CategoriasPage },
   { path: "/suporte", Component: SuportePage },
+  { path: "/perfil", Component: ClientProfilePage },
+  { path: "/cliente/agendamentos", Component: ClientProfilePage },
 ]);

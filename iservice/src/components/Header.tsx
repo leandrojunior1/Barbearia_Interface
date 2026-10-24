@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router";
+import { sessionRepo } from "../lib/db";
 
 interface HeaderProps {
   loggedIn?: boolean;
@@ -50,7 +51,16 @@ export default function Header({ loggedIn = false, userName = "Ana Costa", userP
         {/* Auth area */}
         <div className="ml-auto flex items-center gap-3">
           {loggedIn ? (
-            <button className="flex items-center gap-2 rounded-full hover:bg-gray-50 px-3 py-1.5 transition-colors">
+            <button
+              onClick={() => {
+                const session = sessionRepo.get();
+                if (session?.type === "client") navigate("/perfil");
+                else if (session?.type === "lojista" && session.storeId) {
+                  navigate(`/dashboard/${session.storeId}`);
+                }
+              }}
+              className="flex items-center gap-2 rounded-full hover:bg-gray-50 px-3 py-1.5 transition-colors"
+            >
               <div className="w-8 h-8 rounded-full overflow-hidden bg-brand flex items-center justify-center text-white text-sm font-medium">
                 {userPhoto ? <img src={userPhoto} alt={userName} className="w-full h-full object-cover" /> : userName[0]}
               </div>
