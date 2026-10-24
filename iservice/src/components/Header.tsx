@@ -1,17 +1,41 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router";
-import { sessionRepo } from "../lib/db";
+import { bookingRepo, sessionRepo, type Session } from "../lib/db";
 
-interface HeaderProps {
-  loggedIn?: boolean;
-  userName?: string;
-  userPhoto?: string;
-}
-
-export default function Header({ loggedIn = false, userName = "Ana Costa", userPhoto }: HeaderProps) {
+export default function Header() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [activeCount, setActiveCount] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    const currentSession = sessionRepo.get();
+    setSession(currentSession);
+    setDropdownOpen(false);
+
+    if (currentSession?.type === "client" && currentSession.name) {
+      const count = bookingRepo
+        .getAll()
+        .filter(
+          (booking) =>
+            booking.clientName.toLowerCase() === currentSession.name.toLowerCase() &&
+            booking.status === "confirmado",
+        ).length;
+      setActiveCount(count);
+    } else {
+      setActiveCount(0);
+    }
+  }, [location.pathname]);
+
+  const handleLogout = () => {
+    sessionRepo.clear();
+    setSession(null);
+    setActiveCount(0);
+    setDropdownOpen(false);
+    navigate("/");
+  };
 
   const goToServices = () => {
     if (location.pathname === "/") {
@@ -49,23 +73,61 @@ export default function Header({ loggedIn = false, userName = "Ana Costa", userP
         </nav>
 
         {/* Auth area */}
-        <div className="ml-auto flex items-center gap-3">
-          {loggedIn ? (
-            <button
-              onClick={() => {
-                const session = sessionRepo.get();
-                if (session?.type === "client") navigate("/perfil");
-                else if (session?.type === "lojista" && session.storeId) {
-                  navigate(`/dashboard/${session.storeId}`);
-                }
-              }}
-              className="flex items-center gap-2 rounded-full hover:bg-gray-50 px-3 py-1.5 transition-colors"
-            >
-              <div className="w-8 h-8 rounded-full overflow-hidden bg-brand flex items-center justify-center text-white text-sm font-medium">
-                {userPhoto ? <img src={userPhoto} alt={userName} className="w-full h-full object-cover" /> : userName[0]}
+        <div className="ml-auto flex items-center gap-3 relative">
+          {session ? (
+            <div className="flex items-center gap-3">
+              {session.type === "client" && (
+                <Link
+                  to="/cliente/agendamentos"
+                  className="relative px-3 py-1.5 text-xs font-semibold text-[#2F6B6B] bg-[#EBF3F3] hover:bg-[#dbeaea] rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  Meus Agendamentos
+                  {activeCount > 0 && (
+                    <span
+                      aria-label={`${activeCount} agendamentos confirmados`}
+                      className="w-5 h-5 rounded-full bg-[#2F6B6B] text-white text-[10px] flex items-center justify-center font-bold"
+                    >
+                      {activeCount}
+                    </span>
+                  )}
+                </Link>
+              )}
+
+              <div className="relative">
+                <button
+                  type="button"
+                  aria-expanded={dropdownOpen}
+                  onClick={() => setDropdownOpen((open) => !open)}
+                  className="flex items-center gap-2 rounded-full hover:bg-gray-50 px-3 py-1.5 transition-colors"
+                >
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-[#2F6B6B] flex items-center justify-center text-white text-sm font-medium">
+                    {session.name ? session.name[0].toUpperCase() : "U"}
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 hidden sm:block">{session.name}</span>
+                </button>
+
+                {dropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-100 rounded-2xl shadow-lg py-2 z-50">
+                    {session.type === "lojista" && session.storeId && (
+                      <Link
+                        to={`/dashboard/${session.storeId}`}
+                        onClick={() => setDropdownOpen(false)}
+                        className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Painel da Loja
+                      </Link>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                    >
+                      Sair da conta
+                    </button>
+                  </div>
+                )}
               </div>
-              <span className="text-sm font-medium text-gray-700 hidden sm:block">{userName}</span>
-            </button>
+            </div>
           ) : (
             <>
               <button onClick={() => navigate("/login")} className="text-sm font-medium text-gray-700 hover:text-brand transition-colors px-3 py-2">
@@ -96,6 +158,27 @@ export default function Header({ loggedIn = false, userName = "Ana Costa", userP
           <button type="button" onClick={() => { setMobileOpen(false); goToServices(); }} className="text-left text-sm font-medium text-gray-700">Serviços</button>
           <Link to="/categorias" className="text-sm font-medium text-gray-700" onClick={() => setMobileOpen(false)}>Categorias</Link>
           <Link to="/contato" className="text-sm font-medium text-gray-700" onClick={() => setMobileOpen(false)}>Contato</Link>
+          {session?.type === "client" && (
+            <Link
+              to="/cliente/agendamentos"
+              className="text-sm font-medium text-[#2F6B6B]"
+              onClick={() => setMobileOpen(false)}
+            >
+              Meus Agendamentos ({activeCount})
+            </Link>
+          )}
+          {session && (
+            <button
+              type="button"
+              onClick={() => {
+                setMobileOpen(false);
+                handleLogout();
+              }}
+              className="text-left text-sm font-medium text-red-600 pt-2 border-t border-gray-100"
+            >
+              Sair da conta
+            </button>
+          )}
         </div>
       )}
     </header>

@@ -1,6 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { storeRepo, bookingRepo, sessionRepo, type Store, type Service, type Professional, type Booking } from "../lib/db";
+import {
+  storeRepo,
+  bookingRepo,
+  sessionRepo,
+  storeSupportTicketRepo,
+  type StoreSupportTicket,
+  type Store,
+  type Service,
+  type Professional,
+  type Booking,
+} from "../lib/db";
 
 type Tab = "agendamentos" | "estabelecimento" | "servicos" | "profissionais" | "customizacao" | "financeiro" | "suporte";
 
@@ -352,6 +362,144 @@ function CustomizacaoTab({ store, onSave }: { store: Store; onSave: (patch: Part
   );
 }
 
+function SuporteTab({ storeId }: { storeId: string }) {
+  const [tickets, setTickets] = useState<StoreSupportTicket[]>([]);
+  const [subject, setSubject] = useState("");
+  const [category, setCategory] = useState("Técnico");
+  const [message, setMessage] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+
+  useEffect(() => {
+    setTickets(storeSupportTicketRepo.getByStore(storeId));
+  }, [storeId]);
+
+  useEffect(() => {
+    if (!successMsg) return;
+    const timeoutId = window.setTimeout(() => setSuccessMsg(""), 4000);
+    return () => window.clearTimeout(timeoutId);
+  }, [successMsg]);
+
+  function handleCreateTicket(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedSubject = subject.trim();
+    const trimmedMessage = message.trim();
+    if (!trimmedSubject || !trimmedMessage) return;
+
+    const newTicket: StoreSupportTicket = {
+      id: crypto.randomUUID(),
+      storeId,
+      subject: trimmedSubject,
+      category,
+      message: trimmedMessage,
+      status: "Em Aberto",
+      createdAt: new Date().toISOString(),
+    };
+
+    storeSupportTicketRepo.save(newTicket);
+    setTickets(storeSupportTicketRepo.getByStore(storeId));
+    setSubject("");
+    setMessage("");
+    setSuccessMsg("Chamado enviado com sucesso! Nossa equipe responderá em breve.");
+  }
+
+  return (
+    <div className="space-y-8">
+      <section className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+        <h2 className="text-lg font-bold text-gray-900 mb-4">Abrir Novo Chamado de Suporte</h2>
+        {successMsg && (
+          <div role="status" className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl">
+            {successMsg}
+          </div>
+        )}
+        <form onSubmit={handleCreateTicket} className="space-y-4 max-w-2xl">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="support-subject" className="block text-xs font-semibold text-gray-600 mb-1">
+                Assunto
+              </label>
+              <input
+                id="support-subject"
+                type="text"
+                required
+                placeholder="Ex: Problema com horários da agenda"
+                value={subject}
+                onChange={(event) => setSubject(event.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#2F6B6B]"
+              />
+            </div>
+            <div>
+              <label htmlFor="support-category" className="block text-xs font-semibold text-gray-600 mb-1">
+                Categoria
+              </label>
+              <select
+                id="support-category"
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white focus:outline-none focus:border-[#2F6B6B]"
+              >
+                <option value="Técnico">Técnico / Sistema</option>
+                <option value="Financeiro">Financeiro / Planos</option>
+                <option value="Dúvida">Dúvida Operacional</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label htmlFor="support-message" className="block text-xs font-semibold text-gray-600 mb-1">
+              Mensagem Detalhada
+            </label>
+            <textarea
+              id="support-message"
+              required
+              rows={4}
+              placeholder="Descreva o que está ocorrendo..."
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              className="w-full border border-gray-200 rounded-xl p-4 text-sm focus:outline-none focus:border-[#2F6B6B]"
+            />
+          </div>
+          <button
+            type="submit"
+            className="px-6 py-3 rounded-xl bg-[#2F6B6B] text-white text-sm font-semibold shadow-sm hover:opacity-90 transition-opacity"
+          >
+            Enviar Chamado
+          </button>
+        </form>
+      </section>
+
+      <section className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+        <h2 className="text-lg font-bold text-gray-900 mb-4">Meus Chamados Enviados</h2>
+        {tickets.length === 0 ? (
+          <p className="text-sm text-gray-400 py-6 text-center">
+            Nenhum chamado registrado até o momento.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {tickets.map((ticket) => (
+              <article
+                key={ticket.id}
+                className="border border-gray-100 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gray-50/50"
+              >
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                      {ticket.status}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      [{ticket.category}] · {new Date(ticket.createdAt).toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-gray-800 text-sm">{ticket.subject}</h3>
+                  <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{ticket.message}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { storeId } = useParams();
   const navigate = useNavigate();
@@ -383,7 +531,7 @@ export default function DashboardPage() {
     profissionais: <ProfissionaisTab store={store} onSave={patch} />,
     customizacao: <CustomizacaoTab store={store} onSave={patch} />,
     financeiro: <FinanceiroTab store={store} bookings={bookings} onSave={patch} />,
-    suporte: <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-gray-400 text-sm">Em breve.</div>,
+    suporte: <SuporteTab storeId={store.id} />,
   }[tab];
 
   return (

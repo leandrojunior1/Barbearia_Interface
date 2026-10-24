@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
-import { storeRepo, sessionRepo, type Store } from "../lib/db";
+import { storeRepo, type Store } from "../lib/db";
 
 const FALLBACK_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
@@ -98,7 +98,6 @@ export default function HomePage() {
   const [geo, setGeo] = useState<GeoState>("pending");
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const session = sessionRepo.get();
 
   useEffect(() => {
     setStores(storeRepo.getApproved());
@@ -119,7 +118,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header loggedIn={!!session} userName={session?.name} />
+      <Header />
 
       <section className="bg-[#1a2e2e] py-16 sm:py-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">

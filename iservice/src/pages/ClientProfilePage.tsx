@@ -62,7 +62,7 @@ export default function ClientProfilePage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
-      <Header loggedIn userName={session.name} />
+      <Header />
 
       <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 py-10 w-full">
         <div className="bg-white rounded-2xl border border-gray-100 p-6 mb-8 shadow-sm flex items-center justify-between gap-4">

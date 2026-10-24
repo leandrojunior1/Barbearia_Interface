@@ -62,6 +62,8 @@ export interface Store {
   phone: string;
   whatsapp: string;
   status: "pendente" | "ativo" | "suspenso" | "desativado";
+  availabilityStatus?: "Ativo" | "Inativo";
+  plano?: "Grátis" | "Pro" | "Enterprise";
   preferredContact: "phone" | "whatsapp" | "email";
   featured: boolean;
   deactivatedAt?: string;
@@ -83,6 +85,16 @@ export interface Ticket {
   messages: { sender: string; text: string; time: string }[];
 }
 
+export interface StoreSupportTicket {
+  id: string;
+  storeId: string;
+  subject: string;
+  category: string;
+  message: string;
+  status: "Em Aberto" | "Respondido";
+  createdAt: string;
+}
+
 export interface Session {
   type: "client" | "lojista";
   name: string;
@@ -98,6 +110,7 @@ const KEYS = {
   bookings: "iservice_bookings",
   categories: "iservice_categories",
   tickets: "iservice_tickets",
+  storeTickets: "iservice_tickets_v1",
   session: "iservice_session",
 };
 
@@ -174,7 +187,9 @@ export const storeRepo = {
     return storeRepo.getAll().find((s) => s.loginId === loginId);
   },
   getApproved(): Store[] {
-    return storeRepo.getAll().filter((s) => s.status === "ativo");
+    return storeRepo
+      .getAll()
+      .filter((s) => s.status === "ativo" && s.availabilityStatus !== "Inativo");
   },
   getPending(): Store[] {
     return storeRepo.getAll().filter((s) => s.status === "pendente");
@@ -274,11 +289,90 @@ export const ticketRepo = {
     else all.push(ticket);
     write(KEYS.tickets, all);
   },
+  updateStatus(ticketId: string, status: Ticket["status"]) {
+    const all = ticketRepo.getAll();
+    const ticketIndex = all.findIndex((ticket) => ticket.id === ticketId);
+    if (ticketIndex < 0) return;
+    all[ticketIndex] = { ...all[ticketIndex], status };
+    write(KEYS.tickets, all);
+  },
   reply(ticketId: string, sender: string, text: string) {
-    const ticket = ticketRepo.getAll().find((t) => t.id === ticketId);
+    const all = ticketRepo.getAll();
+    const ticket = all.find((t) => t.id === ticketId);
     if (!ticket) return;
     ticket.messages.push({ sender, text, time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) });
-    ticketRepo.save(ticket);
+    ticket.status = "fechado";
+    write(KEYS.tickets, all);
+  },
+};
+
+export const storeSupportTicketRepo = {
+  getAll(): StoreSupportTicket[] {
+    return read<StoreSupportTicket[]>(KEYS.storeTickets, []);
+  },
+  getByStore(storeId: string): StoreSupportTicket[] {
+    return storeSupportTicketRepo.getAll().filter((ticket) => ticket.storeId === storeId);
+  },
+  save(ticket: StoreSupportTicket) {
+    const all = storeSupportTicketRepo.getAll();
+    write(KEYS.storeTickets, [ticket, ...all]);
+  },
+  updateStatus(ticketId: string, status: StoreSupportTicket["status"]) {
+    const all = storeSupportTicketRepo.getAll();
+    const ticketIndex = all.findIndex((ticket) => ticket.id === ticketId);
+    if (ticketIndex < 0) return;
+    all[ticketIndex] = { ...all[ticketIndex], status };
+    write(KEYS.storeTickets, all);
+  },
+};
+
+export const adminRepo = {
+  getGlobalMetrics() {
+    const stores = storeRepo.getAll();
+    const bookings = bookingRepo.getAll();
+    const legacyTickets = ticketRepo.getAll();
+    const storeTickets = storeSupportTicketRepo.getAll();
+
+    const totalRevenue = bookings
+      .filter((booking) => booking.status === "confirmado")
+      .reduce((total, booking) => total + booking.price, 0);
+
+    const openTickets =
+      legacyTickets.filter((ticket) => ticket.status === "aberto").length +
+      storeTickets.filter((ticket) => ticket.status === "Em Aberto").length;
+
+    return {
+      totalStores: stores.length,
+      activeStores: stores.filter(
+        (store) => store.status === "ativo" && store.availabilityStatus !== "Inativo",
+      ).length,
+      totalBookings: bookings.length,
+      totalRevenue,
+      openTickets,
+    };
+  },
+  toggleStoreStatus(storeId: string) {
+    const store = storeRepo.getById(storeId);
+    if (!store) return;
+    storeRepo.update(storeId, {
+      availabilityStatus: store.availabilityStatus === "Inativo" ? "Ativo" : "Inativo",
+    });
+  },
+  updateStorePlan(storeId: string, plano: NonNullable<Store["plano"]>) {
+    storeRepo.update(storeId, { plano });
+  },
+};
+
+export const adminTicketRepo = {
+  replyTicket(ticketId: string) {
+    const storeTicket = storeSupportTicketRepo
+      .getAll()
+      .some((ticket) => ticket.id === ticketId);
+    if (storeTicket) {
+      storeSupportTicketRepo.updateStatus(ticketId, "Respondido");
+      return;
+    }
+    ticketRepo.updateStatus(ticketId, "fechado");
   },
 };
 
