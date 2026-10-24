@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import ToastContainer, { type ToastMessage } from "../components/Toast";
 import {
   storeRepo, bookingRepo, sessionRepo, buildWhatsAppLink,
   type PublicStore, type Service, type Professional,
@@ -46,6 +47,11 @@ function toISODate(d: Date) {
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatDatePTBR(isoDate: string) {
+  const parts = isoDate.split("-");
+  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : isoDate;
 }
 
 function nextDays(n: number) {
@@ -130,6 +136,7 @@ export default function BookingPage() {
   });
   const [loginError, setLoginError] = useState("");
   const [bookingError, setBookingError] = useState("");
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const loadedStore = store ?? EMPTY_PUBLIC_STORE;
   const days = useMemo(() => nextDays(14), []);
@@ -168,10 +175,34 @@ export default function BookingPage() {
   );
 
   const cust = loadedStore.customization;
+  const fontSizeClass = cust.fontSize === "sm" ? "text-sm" : cust.fontSize === "lg" ? "text-lg" : "text-base";
   const primaryColor = cust.primaryColor || "#2F6B6B";
   const secondaryColor = cust.secondaryColor || "#EBF3F3";
   const cardBorderRadius = cust.cardStyle === "quadrado" ? "12px" : cust.cardStyle === "circular" ? "50%" : "50% 50% 0 0";
   const buttonBg = cust.cardFill === "gradient" ? `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})` : primaryColor;
+
+  useEffect(() => {
+    const supportedFonts = ["Work Sans", "Playfair Display", "Inter", "Lora", "Poppins"];
+    if (!supportedFonts.includes(cust.fontFamily)) return;
+
+    const linkId = "booking-google-font";
+    let link = document.getElementById(linkId) as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement("link");
+      link.id = linkId;
+      link.rel = "stylesheet";
+      document.head.appendChild(link);
+    }
+    link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(cust.fontFamily).replace(/%20/g, "+")}:wght@400;500;600;700&display=swap`;
+  }, [cust.fontFamily]);
+
+  function addToast(text: string, type: ToastMessage["type"] = "info") {
+    const id = crypto.randomUUID();
+    setToasts((current) => [...current, { id, text, type }]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id));
+    }, 4000);
+  }
 
   if (!store) {
     return (
@@ -289,6 +320,7 @@ export default function BookingPage() {
     const endMinutes = startMinutes + totalCartDuration;
     const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
     const serviceNamesSummary = cartItems.map(s => s.name).join(" + ");
+    const preferredContact = current.preferredContact ?? "whatsapp";
 
     bookingRepo.save({
       id: crypto.randomUUID(),
@@ -302,7 +334,7 @@ export default function BookingPage() {
       time: selectedTime,
       clientName: current.name,
       clientPhone: current.phone ?? "",
-      preferredContact: current.preferredContact ?? "whatsapp",
+      preferredContact,
       status: "confirmado",
       price: totalCartPrice,
       createdAt: new Date().toISOString(),
@@ -310,8 +342,14 @@ export default function BookingPage() {
 
     const message = `Olá! Confirmando meu agendamento em ${loadedStore.name}:\n` +
       `Serviços: ${serviceNamesSummary}\nProfissional: ${selectedProfessional.name}\n` +
-      `Data: ${selectedDate}\nHorário: ${selectedTime} às ${endTime} (${formatDuration(totalCartDuration)})`;
-    window.open(buildWhatsAppLink(loadedStore.whatsapp, message), "_blank");
+      `Data: ${formatDatePTBR(selectedDate)}\nHorário: ${selectedTime} às ${endTime} (${formatDuration(totalCartDuration)})`;
+    if (preferredContact === "whatsapp") {
+      const whatsappLink = buildWhatsAppLink(loadedStore.whatsapp, message);
+      if (whatsappLink) window.open(whatsappLink, "_blank", "noopener,noreferrer");
+      else addToast("Agendamento salvo, mas o estabelecimento não cadastrou um WhatsApp para contato.");
+    } else {
+      addToast(`Agendamento salvo. A preferência selecionada foi ${preferredContact}; o envio automático por esse canal não está disponível.`);
+    }
 
     setSuccess(true);
   }
@@ -327,10 +365,26 @@ export default function BookingPage() {
     return generateTimesForDay(loadedStore, selectedProfessional, iso, totalCartDuration).length > 0;
   };
 
+  function continueBooking() {
+    if (step === 1) {
+      handleProceedToProfessional();
+    } else if (step === 2 && selectedProfessional) {
+      setStep(3);
+    } else if (step === 3 && selectedDate) {
+      handleSelectDate(selectedDate);
+    } else if (step === 4 && selectedTime) {
+      handleSelectTime(selectedTime);
+    }
+  }
+
   if (success) {
     return (
       <div className="min-h-screen flex flex-col" style={{ fontFamily: cust.fontFamily }}>
         <Header />
+        <ToastContainer
+          toasts={toasts}
+          onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
+        />
         <div className="flex-1 flex flex-col items-center justify-center px-4 py-20 text-center">
           <div className="w-20 h-20 rounded-full flex items-center justify-center mb-6" style={{ background: secondaryColor }}>
             <svg className="w-10 h-10" style={{ color: primaryColor }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
@@ -348,8 +402,12 @@ export default function BookingPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 pb-32" style={{ fontFamily: cust.fontFamily }}>
+    <div className={`min-h-screen flex flex-col bg-gray-50 pb-32 ${fontSizeClass}`} style={{ fontFamily: cust.fontFamily }}>
       <Header />
+    <ToastContainer
+      toasts={toasts}
+      onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
+    />
 
       <div className="bg-white border-b border-gray-100">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
@@ -380,13 +438,19 @@ export default function BookingPage() {
         <div className="space-y-4">
           {/* Etapa 1: Serviços (Multi-Select Sacola) */}
           <div>
-            <div className={`flex items-center gap-4 p-4 rounded-xl ${step === 1 ? "bg-white shadow-sm border border-gray-100" : "bg-gray-50 opacity-80"}`}>
+            <button
+              type="button"
+              disabled={step === 1}
+              onClick={() => setStep(1)}
+              className={`w-full text-left flex items-center gap-4 p-4 rounded-xl ${step === 1 ? "bg-white shadow-sm border border-gray-100" : "bg-gray-50 opacity-80 cursor-pointer hover:bg-white"}`}
+            >
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold" style={{ background: step > 1 ? primaryColor : "transparent", color: step > 1 ? "#fff" : primaryColor, border: step === 1 ? `2px solid ${primaryColor}` : "none" }}>{step > 1 ? "✓" : 1}</div>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-gray-800">Escolha os Serviços (Adicione um ou mais)</p>
                 {cartItems.length > 0 && <p className="text-xs text-[#2F6B6B]">{cartItems.map(i => i.name).join(", ")}</p>}
               </div>
-            </div>
+              {step > 1 && <span className="text-xs text-[#2F6B6B] font-medium underline">Editar</span>}
+            </button>
 
             {step === 1 && (
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -399,7 +463,9 @@ export default function BookingPage() {
                       key={s.id}
                       onClick={() => {
                         if (!validPrice || !validDuration) {
-                          setBookingError("Este serviço está com preço ou duração inválidos. Entre em contato com o estabelecimento.");
+                          const error = "Este serviço está com preço ou duração inválidos. Entre em contato com o estabelecimento.";
+                          setBookingError(error);
+                          addToast(error, "error");
                           return;
                         }
                         setBookingError("");
@@ -423,7 +489,7 @@ export default function BookingPage() {
                           </span>
                         </div>
                       </div>
-                      <div className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-colors ${isSelected ? "border-[#2F6B6B] bg-[#2F6B6B] text-white" : "border-gray-300 bg-white"}`}>
+                      <div className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-colors ${isSelected ? "border-brand [#2F6B6B] border-[#2F6B6B] text-white" : "border-gray-300 bg-white"}`}>
                         {isSelected && <span className="text-xs font-bold">✓</span>}
                       </div>
                     </div>
@@ -435,10 +501,16 @@ export default function BookingPage() {
 
           {/* Etapa 2: Profissional */}
           <div>
-            <div className={`flex items-center gap-4 p-4 rounded-xl ${step === 2 ? "bg-white shadow-sm border border-gray-100" : "bg-gray-50 opacity-60"}`}>
+            <button
+              type="button"
+              disabled={step <= 2 || !selectedProfessional}
+              onClick={() => setStep(2)}
+              className={`w-full text-left flex items-center gap-4 p-4 rounded-xl ${step === 2 ? "bg-white shadow-sm border border-gray-100" : step > 2 ? "bg-white border border-gray-100 cursor-pointer hover:bg-gray-50" : "bg-gray-50 opacity-60 cursor-not-allowed"}`}
+            >
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold" style={{ background: step > 2 ? primaryColor : "transparent", color: step > 2 ? "#fff" : primaryColor, border: step === 2 ? `2px solid ${primaryColor}` : "2px solid #e5e7eb" }}>{step > 2 ? "✓" : 2}</div>
               <p className="text-sm font-semibold text-gray-800">Escolha o Profissional</p>
-            </div>
+              {step > 2 && <span className="ml-auto text-xs text-[#2F6B6B] font-medium underline">Editar</span>}
+            </button>
             {step === 2 && (
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {availableProfessionals.map(p => (
@@ -456,10 +528,16 @@ export default function BookingPage() {
 
           {/* Etapa 3: Data */}
           <div>
-            <div className={`flex items-center gap-4 p-4 rounded-xl ${step === 3 ? "bg-white shadow-sm border border-gray-100" : "bg-gray-50 opacity-60"}`}>
+            <button
+              type="button"
+              disabled={step <= 3 || !selectedDate}
+              onClick={() => setStep(3)}
+              className={`w-full text-left flex items-center gap-4 p-4 rounded-xl ${step === 3 ? "bg-white shadow-sm border border-gray-100" : step > 3 ? "bg-white border border-gray-100 cursor-pointer hover:bg-gray-50" : "bg-gray-50 opacity-60 cursor-not-allowed"}`}
+            >
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold" style={{ background: step > 3 ? primaryColor : "transparent", color: step > 3 ? "#fff" : primaryColor, border: step === 3 ? `2px solid ${primaryColor}` : "2px solid #e5e7eb" }}>{step > 3 ? "✓" : 3}</div>
               <p className="text-sm font-semibold text-gray-800">Escolha a Data</p>
-            </div>
+              {step > 3 && <span className="ml-auto text-xs text-[#2F6B6B] font-medium underline">Editar</span>}
+            </button>
             {step === 3 && (
               <div className="mt-3 bg-white rounded-xl border border-gray-100 p-4">
                 <div className="flex gap-2 overflow-x-auto pb-1">
@@ -481,10 +559,16 @@ export default function BookingPage() {
 
           {/* Etapa 4: Horários agrupados por turno */}
           <div>
-            <div className={`flex items-center gap-4 p-4 rounded-xl ${step === 4 ? "bg-white shadow-sm border border-gray-100" : "bg-gray-50 opacity-60"}`}>
+            <button
+              type="button"
+              disabled={step <= 4 || !selectedTime}
+              onClick={() => setStep(4)}
+              className={`w-full text-left flex items-center gap-4 p-4 rounded-xl ${step === 4 ? "bg-white shadow-sm border border-gray-100" : step > 4 ? "bg-white border border-gray-100 cursor-pointer hover:bg-gray-50" : "bg-gray-50 opacity-60 cursor-not-allowed"}`}
+            >
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold" style={{ background: step > 4 ? primaryColor : "transparent", color: step > 4 ? "#fff" : primaryColor, border: step === 4 ? `2px solid ${primaryColor}` : "2px solid #e5e7eb" }}>{step > 4 ? "✓" : 4}</div>
               <p className="text-sm font-semibold text-gray-800">Escolha o Horário (Considerando a duração total de {formatDuration(totalCartDuration)})</p>
-            </div>
+              {step > 4 && <span className="ml-auto text-xs text-[#2F6B6B] font-medium underline">Editar</span>}
+            </button>
             {step === 4 && (
               <div className="mt-3 bg-white rounded-xl border border-gray-100 p-6 space-y-6">
                 {bookingError && <p role="alert" className="text-sm text-red-600">{bookingError}</p>}
@@ -540,14 +624,14 @@ export default function BookingPage() {
                     placeholder="Nome completo"
                     value={loginDetails.name}
                     onChange={e => setLoginDetails(p => ({ ...p, name: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#2F6B6B]"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-brand [#2F6B6B]"
                   />
                   <input
                     placeholder="Celular (ex: (11) 99999-9999)"
                     value={loginDetails.phone}
                     onChange={e => setLoginDetails(p => ({ ...p, phone: formatPhone(e.target.value) }))}
                     maxLength={15}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#2F6B6B]"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-brand [#2F6B6B]"
                   />
                   <label className="block text-xs font-semibold text-gray-600">
                     Preferência de contato
@@ -593,7 +677,7 @@ export default function BookingPage() {
                   {[
                     { label: "Tempo Total Estimado", value: formatDuration(totalCartDuration) },
                     { label: "Profissional", value: selectedProfessional?.name },
-                    { label: "Data e Horário", value: `${selectedDate} às ${selectedTime}` },
+                    { label: "Data e Horário", value: `${selectedDate ? formatDatePTBR(selectedDate) : ""} às ${selectedTime}` },
                     { label: "Valor Total", value: `R$ ${totalCartPrice.toFixed(2)}` },
                   ].map(row => (
                     <div key={row.label} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
@@ -613,9 +697,9 @@ export default function BookingPage() {
       </div>
 
       {/* Sacola Flutuante / Bottom Bar (Padrão iFood) */}
-      {cartItems.length > 0 && step === 1 && (
+      {cartItems.length > 0 && step < 5 && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-t border-gray-200 shadow-lg p-4 animate-in slide-in-from-bottom duration-300">
-          <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+          <div className="max-w-4xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full animate-pulse" style={{ background: primaryColor }}></span>
@@ -627,11 +711,17 @@ export default function BookingPage() {
               <p className="text-xs text-gray-400">Duração estimada: {formatDuration(totalCartDuration)}</p>
             </div>
             <button
-              onClick={handleProceedToProfessional}
-              className="px-6 py-3 rounded-xl text-white text-sm font-semibold shadow-md transition-all hover:opacity-90 flex items-center gap-2"
-              style={{ background: buttonBg }}
-            >
-              Avançar para Profissional &rarr;
+                onClick={continueBooking}
+                disabled={
+                  (step === 1 && cartItems.length === 0) ||
+                  (step === 2 && !selectedProfessional) ||
+                  (step === 3 && !selectedDate) ||
+                  (step === 4 && !selectedTime)
+                }
+                className="w-full sm:w-auto justify-center px-6 py-3 rounded-xl text-white text-sm font-semibold shadow-md transition-all hover:opacity-90 flex items-center gap-2"
+                style={{ background: buttonBg, opacity: (step === 2 && !selectedProfessional) || (step === 3 && !selectedDate) || (step === 4 && !selectedTime) ? 0.5 : 1 }}
+              >
+                {step === 1 ? "Avançar para Profissional" : step === 2 ? "Avançar para Data" : step === 3 ? "Avançar para Horário" : "Continuar para Confirmação"} &rarr;
             </button>
           </div>
         </div>

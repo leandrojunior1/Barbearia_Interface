@@ -160,7 +160,7 @@ export default function HomePage() {
         </section>
       ) : (
         <>
-          <section id="destaques" className="py-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
+          <section id="destaques-servicos" className="py-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
             <div className="flex items-baseline justify-between mb-6">
               <h2 className="text-2xl font-bold text-gray-900" style={{ fontFamily: "var(--font-display)" }}>Destaques</h2>
             </div>

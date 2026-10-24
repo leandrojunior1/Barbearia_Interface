@@ -28,7 +28,11 @@ const NAV_ITEMS: { key: Tab; label: string; icon: string }[] = [
 ];
 
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-const STATUS_COLORS: Record<string, string> = { confirmado: "bg-green-50 text-green-700", cancelado: "bg-red-50 text-red-600" };
+const STATUS_COLORS: Record<string, string> = {
+  confirmado: "bg-green-50 text-green-700",
+  concluído: "bg-emerald-50 text-emerald-700",
+  cancelado: "bg-red-50 text-red-600",
+};
 
 function todayISO() {
   const today = new Date();
@@ -78,7 +82,15 @@ function OverviewPanel({ store, bookings }: { store: Store; bookings: Booking[] 
   );
 }
 
-function AgendamentosTab({ store, bookings, onCancel }: { store: Store; bookings: Booking[]; onCancel: (id: string) => void }) {
+function AgendamentosTab({
+  store,
+  bookings,
+  onUpdateStatus,
+}: {
+  store: Store;
+  bookings: Booking[];
+  onUpdateStatus: (id: string, status: Booking["status"]) => void;
+}) {
   const [filter, setFilter] = useState<string | null>(null);
   const filtered = filter ? bookings.filter(b => b.professionalId === filter) : bookings;
   return (
@@ -109,7 +121,18 @@ function AgendamentosTab({ store, bookings, onCancel }: { store: Store; bookings
                   <td className="px-4 py-3 text-gray-600">{serviceNames}</td>
                   <td className="px-4 py-3 text-gray-600">{pro?.name ?? "—"}</td>
                   <td className="px-4 py-3"><span className={`px-2.5 py-1 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[b.status]}`}>{b.status}</span></td>
-                  <td className="px-4 py-3">{b.status === "confirmado" && <button onClick={() => onCancel(b.id)} className="text-xs text-red-500 hover:underline">Cancelar</button>}</td>
+                  <td className="px-4 py-3">
+                    {b.status === "confirmado" && (
+                      <div className="flex gap-3 whitespace-nowrap">
+                        <button onClick={() => onUpdateStatus(b.id, "concluído")} className="text-xs font-medium text-emerald-700 hover:underline">
+                          Concluir
+                        </button>
+                        <button onClick={() => onUpdateStatus(b.id, "cancelado")} className="text-xs text-red-500 hover:underline">
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -126,9 +149,17 @@ function EstabelecimentoTab({ store, onSave }: { store: Store; onSave: (patch: P
   const [closeTime, setCloseTime] = useState(store.establishment.closeTime);
   const [holidays, setHolidays] = useState(store.establishment.holidays);
   const [newHoliday, setNewHoliday] = useState("");
+  const [validationError, setValidationError] = useState("");
 
   function toggleDay(d: number) { setWorkDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort()); }
-  function save() { onSave({ establishment: { workDays, openTime, closeTime, holidays } }); }
+  function save() {
+    if (!openTime || !closeTime || openTime >= closeTime) {
+      setValidationError("O horário de abertura deve ser anterior ao horário de fechamento.");
+      return;
+    }
+    setValidationError("");
+    onSave({ establishment: { workDays, openTime, closeTime, holidays } });
+  }
 
   return (
     <div>
@@ -146,6 +177,7 @@ function EstabelecimentoTab({ store, onSave }: { store: Store; onSave: (patch: P
           <div><label className="text-xs font-medium text-gray-500 block mb-2">Abre</label><input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm" /></div>
           <div><label className="text-xs font-medium text-gray-500 block mb-2">Fecha</label><input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm" /></div>
         </div>
+        {validationError && <p role="alert" className="text-sm text-red-600">{validationError}</p>}
         <div>
           <label className="text-xs font-medium text-gray-500 block mb-2">Feriados / dias fechados</label>
           <div className="flex gap-2 mb-2">
@@ -256,11 +288,23 @@ function ProfissionaisTab({ store, onSave }: { store: Store; onSave: (patch: Par
 }
 
 function FinanceiroTab({ store, bookings, onSave }: { store: Store; bookings: Booking[]; onSave: (patch: Partial<Store>) => void }) {
+  const today = new Date();
+  const todayKey = todayISO();
+  const offsetDateKey = (offset: number) => {
+    const date = new Date(today);
+    date.setDate(date.getDate() + offset);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  const thisWeekStart = offsetDateKey(-6);
+  const lastWeekStart = offsetDateKey(-13);
+  const lastWeekEnd = offsetDateKey(-7);
+  const nonCancelled = bookings.filter(b => b.status !== "cancelado");
+  const thisWeek = nonCancelled.filter(b => b.date >= thisWeekStart && b.date <= todayKey);
+  const lastWeek = nonCancelled.filter(b => b.date >= lastWeekStart && b.date <= lastWeekEnd);
   const confirmed = bookings.filter(b => b.status === "confirmado");
-  const now = new Date();
-  const msWeek = 7 * 24 * 60 * 60 * 1000;
-  const thisWeek = confirmed.filter(b => now.getTime() - new Date(b.date).getTime() < msWeek);
-  const lastWeek = confirmed.filter(b => { const diff = now.getTime() - new Date(b.date).getTime(); return diff >= msWeek && diff < msWeek * 2; });
   const totalThis = thisWeek.reduce((sum, booking) => sum + (Number.isFinite(booking.price) ? booking.price : 0), 0);
   const totalLast = lastWeek.reduce((sum, booking) => sum + (Number.isFinite(booking.price) ? booking.price : 0), 0);
   const change = totalLast > 0 ? Math.round(((totalThis - totalLast) / totalLast) * 100) : totalThis > 0 ? 100 : 0;
@@ -642,7 +686,11 @@ export default function DashboardPage() {
     refresh();
     addToast("Alterações salvas com sucesso.");
   }
-  function cancelBooking(id: string) { bookingRepo.cancel(id); refresh(); }
+  function updateBookingStatus(id: string, status: Booking["status"]) {
+    bookingRepo.updateStatus(id, status);
+    refresh();
+    addToast(`Status do agendamento atualizado para ${status}.`);
+  }
   function logout() { sessionRepo.clear(); navigate("/"); }
   function ticketCreated() { addToast("Chamado enviado com sucesso. A equipe responderá em breve."); }
 
@@ -651,7 +699,7 @@ export default function DashboardPage() {
   }
 
   const content = {
-    agendamentos: <AgendamentosTab store={store} bookings={bookings} onCancel={cancelBooking} />,
+    agendamentos: <AgendamentosTab store={store} bookings={bookings} onUpdateStatus={updateBookingStatus} />,
     estabelecimento: <EstabelecimentoTab store={store} onSave={patch} />,
     servicos: <ServicosTab store={store} onSave={patch} />,
     profissionais: <ProfissionaisTab store={store} onSave={patch} />,

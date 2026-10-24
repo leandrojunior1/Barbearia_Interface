@@ -252,14 +252,22 @@ function slugify(name: string): string {
 export async function registerStore(input: {
   name: string; category: string; address: string; phone: string; whatsapp: string; username: string; password: string;
 }): Promise<Store> {
-  const loginId = generateLoginId();
+  const normalizedUsername = input.username.trim();
+  if (storeRepo.getAll().some((store) => store.username.toLowerCase() === normalizedUsername.toLowerCase())) {
+    throw new Error("Este nome de usuário já está sendo utilizado.");
+  }
+  if (input.password.length < 8) {
+    throw new Error("A senha deve ter pelo menos 8 caracteres.");
+  }
+  let loginId = generateLoginId();
+  while (storeRepo.getByLoginId(loginId)) loginId = generateLoginId();
   const passwordHash = await hashPassword(input.password);
   const store: Store = {
     id: slugify(input.name),
     loginId,
     passwordHash,
-    username: input.username,
-    name: input.name,
+    username: normalizedUsername,
+    name: input.name.trim(),
     category: input.category,
     address: input.address,
     phone: input.phone,
@@ -280,14 +288,32 @@ export async function registerStore(input: {
   return store;
 }
 
-export async function loginLojista(username: string, password: string, loginId: string): Promise<Store | null> {
+export type StoreLoginResult =
+  | { ok: true; store: Store }
+  | {
+      ok: false;
+      reason: "invalid-credentials" | "pending" | "suspended" | "deactivated" | "unavailable";
+    };
+
+export async function authenticateLojista(
+  username: string,
+  password: string,
+  loginId: string,
+): Promise<StoreLoginResult> {
   const store = storeRepo.getByLoginId(loginId);
-  if (!store) return null;
-  if (store.username !== username) return null;
+  if (!store || store.username !== username) return { ok: false, reason: "invalid-credentials" };
   const hash = await hashPassword(password);
-  if (hash !== store.passwordHash) return null;
-  if (!isStoreAvailable(store)) return null;
-  return store;
+  if (hash !== store.passwordHash) return { ok: false, reason: "invalid-credentials" };
+  if (store.status === "pendente") return { ok: false, reason: "pending" };
+  if (store.status === "suspenso") return { ok: false, reason: "suspended" };
+  if (store.status === "desativado") return { ok: false, reason: "deactivated" };
+  if (store.availabilityStatus === "Inativo") return { ok: false, reason: "unavailable" };
+  return { ok: true, store };
+}
+
+export async function loginLojista(username: string, password: string, loginId: string): Promise<Store | null> {
+  const result = await authenticateLojista(username, password, loginId);
+  return result.ok ? result.store : null;
 }
 
 export const bookingRepo = {
@@ -302,6 +328,9 @@ export const bookingRepo = {
   },
   cancel(id: string) {
     write(KEYS.bookings, bookingRepo.getAll().map((b) => (b.id === id ? { ...b, status: "cancelado" as const } : b)));
+  },
+  updateStatus(id: string, status: Booking["status"]) {
+    write(KEYS.bookings, bookingRepo.getAll().map((b) => (b.id === id ? { ...b, status } : b)));
   },
   isSlotTaken(
     storeId: string,
@@ -462,6 +491,7 @@ export const sessionRepo = {
 
 export function buildWhatsAppLink(phone: string, message: string): string {
   const digits = phone.replace(/\D/g, "");
+  if (!digits) return "";
   const phoneWithCountryCode = digits.startsWith("55") ? digits : `55${digits}`;
   return `https://wa.me/${phoneWithCountryCode}?text=${encodeURIComponent(message)}`;
 }

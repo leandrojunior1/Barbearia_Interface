@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import Header from "../components/Header";
-import { categoriesRepo, registerStore, loginLojista, sessionRepo } from "../lib/db";
+import { authenticateLojista, categoriesRepo, registerStore, sessionRepo } from "../lib/db";
 
 type Mode = "client" | "lojista";
 type View = "login" | "register" | "register-success" | "client-details";
@@ -30,20 +30,31 @@ export default function LoginPage() {
       setError("Preencha todos os campos obrigatórios.");
       return;
     }
-    const store = await registerStore(form);
-    setGeneratedId(store.loginId);
-    setView("register-success");
+    try {
+      const store = await registerStore(form);
+      setGeneratedId(store.loginId);
+      setView("register-success");
+    } catch (registrationError) {
+      setError(registrationError instanceof Error ? registrationError.message : "Não foi possível concluir o cadastro.");
+    }
   }
 
   async function handleLojistaLogin() {
     setError("");
-    const store = await loginLojista(loginForm.user, loginForm.password, loginForm.storeId);
-    if (!store) {
-      setError("Usuário, senha ou ID inválidos — ou seu cadastro ainda está em análise.");
+    const result = await authenticateLojista(loginForm.user, loginForm.password, loginForm.storeId);
+    if (!result.ok) {
+      const errorMessages = {
+        "invalid-credentials": "Usuário, senha ou ID da loja inválidos.",
+        pending: "Seu cadastro ainda está em análise. Você poderá acessar o painel após a aprovação.",
+        suspended: "O acesso desta loja está suspenso. Entre em contato com o suporte.",
+        deactivated: "Esta loja foi desativada e não pode acessar o painel.",
+        unavailable: "Esta loja está temporariamente inativa na plataforma.",
+      } as const;
+      setError(errorMessages[result.reason]);
       return;
     }
-    sessionRepo.set({ type: "lojista", name: store.username, storeId: store.id });
-    navigate(`/dashboard/${store.id}`);
+    sessionRepo.set({ type: "lojista", name: result.store.username, storeId: result.store.id });
+    navigate(`/dashboard/${result.store.id}`);
   }
 
   function handleGoogleClick() {
@@ -179,7 +190,7 @@ export default function LoginPage() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">Senha</label>
-                  <input type="password" value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
+                  <input type="password" minLength={8} value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
                     placeholder="••••••••"
                     className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-[#2F6B6B]" />
                 </div>

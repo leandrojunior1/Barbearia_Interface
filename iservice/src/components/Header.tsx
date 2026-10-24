@@ -11,22 +11,27 @@ export default function Header() {
   const location = useLocation();
 
   useEffect(() => {
-    const currentSession = sessionRepo.get();
-    setSession(currentSession);
-    setDropdownOpen(false);
+    const syncSession = () => {
+      const currentSession = sessionRepo.get();
+      setSession(currentSession);
 
-    if (currentSession?.type === "client" && currentSession.name) {
-      const count = bookingRepo
-        .getAll()
-        .filter(
-          (booking) =>
-            booking.clientName.toLowerCase() === currentSession.name.toLowerCase() &&
-            booking.status === "confirmado",
-        ).length;
-      setActiveCount(count);
-    } else {
-      setActiveCount(0);
-    }
+      if (currentSession?.type === "client" && currentSession.name) {
+        const count = bookingRepo
+          .getAll()
+          .filter(
+            (booking) =>
+              booking.clientName.toLowerCase() === currentSession.name.toLowerCase() &&
+              booking.status === "confirmado",
+          ).length;
+        setActiveCount(count);
+      } else {
+        setActiveCount(0);
+      }
+    };
+
+    syncSession();
+    window.addEventListener("storage", syncSession);
+    return () => window.removeEventListener("storage", syncSession);
   }, [location.pathname]);
 
   const handleLogout = () => {
@@ -39,14 +44,14 @@ export default function Header() {
 
   const goToServices = () => {
     if (location.pathname === "/") {
-      const target = document.getElementById("destaques");
+      const target = document.getElementById("destaques-servicos");
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
 
     navigate("/");
     window.setTimeout(() => {
-      const target = document.getElementById("destaques");
+      const target = document.getElementById("destaques-servicos");
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 80);
   };

@@ -26,12 +26,12 @@ export default function Footer() {
           </div>
 
           <div>
-            <h4 className="text-white text-sm font-semibold mb-4">Sobre nós</h4>
+            <h4 className="text-white text-sm font-semibold mb-4">Navegação</h4>
             <ul className="space-y-2 text-sm">
-              <li><a href="#" className="hover:text-white transition-colors">A empresa</a></li>
-              <li><a href="#" className="hover:text-white transition-colors">Carreiras</a></li>
-              <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
-              <li><a href="#" className="hover:text-white transition-colors">Privacidade</a></li>
+              <li><Link to="/" className="hover:text-white transition-colors">Início</Link></li>
+              <li><Link to="/categorias" className="hover:text-white transition-colors">Categorias</Link></li>
+              <li><Link to="/contato" className="hover:text-white transition-colors">Fale conosco</Link></li>
+              <li><Link to="/suporte" className="hover:text-white transition-colors">Central de ajuda</Link></li>
             </ul>
           </div>
 
