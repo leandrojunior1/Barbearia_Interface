@@ -1,0 +1,11 @@
+[build]
+  base = "iservice"
+  # Install dependencies (including dev tools like Vite) before building
+  command = "npm install --include=dev && npm run build"
+  publish = "dist"
+
+# Client-side routing (react-router): serve index.html for all app routes
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
