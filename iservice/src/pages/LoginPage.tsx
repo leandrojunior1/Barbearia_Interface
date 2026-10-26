@@ -41,20 +41,52 @@ export default function LoginPage() {
 
   async function handleLojistaLogin() {
     setError("");
-    const result = await authenticateLojista(loginForm.user, loginForm.password, loginForm.storeId);
-    if (!result.ok) {
-      const errorMessages = {
-        "invalid-credentials": "Usuário, senha ou ID da loja inválidos.",
-        pending: "Seu cadastro ainda está em análise. Você poderá acessar o painel após a aprovação.",
-        suspended: "O acesso desta loja está suspenso. Entre em contato com o suporte.",
-        deactivated: "Esta loja foi desativada e não pode acessar o painel.",
-        unavailable: "Esta loja está temporariamente inativa na plataforma.",
-      } as const;
-      setError(errorMessages[result.reason]);
+
+    const adminUsername = loginForm.user.trim().toLowerCase();
+    const adminPassword = loginForm.password.trim();
+    if (adminUsername === "adm" && adminPassword === "admin123") {
+      sessionRepo.set({ type: "admin", name: "adm" });
+      navigate("/admin");
       return;
     }
-    sessionRepo.set({ type: "lojista", name: result.store.username, storeId: result.store.id });
-    navigate(`/dashboard/${result.store.id}`);
+
+    const store = await authenticateLojista(loginForm.storeId, loginForm.user, loginForm.password);
+
+    if (!store) {
+      const err = "Usuário, senha ou ID da loja inválidos.";
+      setError(err);
+      return;
+    }
+
+    if (store.status === "desativado" || store.availabilityStatus === "Inativo") {
+      const err = `Acesso negado: O estabelecimento "${store.name}" encontra-se inativo.`;
+      setError(err);
+      return;
+    }
+
+    sessionRepo.set({ type: "lojista", name: store.username, storeId: store.id });
+    navigate(`/dashboard/${store.id}`);
+  }
+
+  function handleDemoLojistaLogin() {
+    setLoginForm({ user: "joao", password: "demo123", storeId: "12345678" });
+    setError("");
+    void (async () => {
+      const store = await authenticateLojista("12345678", "joao", "demo123");
+      if (!store) {
+        setError("Credenciais de teste inválidas. Verifique o seed do sistema.");
+        return;
+      }
+      sessionRepo.set({ type: "lojista", name: store.username, storeId: store.id });
+      navigate(`/dashboard/${store.id}`);
+    })();
+  }
+
+  function handleDemoAdminLogin() {
+    setLoginForm({ user: "adm", password: "admin123", storeId: "" });
+    setError("");
+    sessionRepo.set({ type: "admin", name: "adm" });
+    navigate("/admin");
   }
 
   function handleGoogleClick() {
@@ -261,6 +293,16 @@ export default function LoginPage() {
                 </div>
               ))}
               {error && <p className="text-xs text-red-500">{error}</p>}
+
+              <div className="grid grid-cols-1 gap-2 mb-2">
+                <button onClick={handleDemoLojistaLogin} className="w-full py-2.5 rounded-xl text-white text-xs font-semibold" style={{ background: "#2F6B6B" }}>
+                  Entrar com login de teste (joao / demo123)
+                </button>
+                <button onClick={handleDemoAdminLogin} className="w-full py-2.5 rounded-xl text-white text-xs font-semibold" style={{ background: "#1f4d4d" }}>
+                  Entrar com admin de teste (adm / admin123)
+                </button>
+              </div>
+
               <button onClick={handleLojistaLogin} className="w-full py-3.5 rounded-xl text-white text-sm font-semibold" style={{ background: "#2F6B6B" }}>
                 Acessar painel
               </button>

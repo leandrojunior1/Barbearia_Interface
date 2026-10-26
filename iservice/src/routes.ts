@@ -13,14 +13,32 @@ import Header from "./components/Header";
 import Footer from "./components/Footer";
 import { sessionRepo, storeRepo } from "./lib/db";
 
+function isAdminSession(session: ReturnType<typeof sessionRepo.get>) {
+  if (!session) return false;
+  const normalizedName = session.name?.trim().toLowerCase();
+  return session.type === "admin" || normalizedName === "adm" || normalizedName === "super admin";
+}
+
 function DashboardGuard() {
   const { storeId } = useParams();
   const session = sessionRepo.get();
 
-  if (!session || session.type !== "lojista") {
+  if (!session) {
     return createElement(Navigate, { to: "/login", replace: true });
   }
-  if (!storeId || session.storeId !== storeId) {
+
+  if (isAdminSession(session)) {
+    const store = storeId ? storeRepo.getById(storeId) : undefined;
+    if (!store) {
+      return createElement(Navigate, { to: "/admin", replace: true });
+    }
+    return createElement(Outlet);
+  }
+
+  if (session.type !== "lojista") {
+    return createElement(Navigate, { to: "/login", replace: true });
+  }
+  if (!storeId || session.storeId?.toLowerCase() !== storeId.toLowerCase()) {
     return createElement(Navigate, { to: "/", replace: true });
   }
   if (!storeRepo.isAvailable(storeId)) {
@@ -32,7 +50,7 @@ function DashboardGuard() {
 
 function AdminGuard() {
   const session = sessionRepo.get();
-  if (!session || session.type !== "admin") {
+  if (!isAdminSession(session)) {
     return createElement(Navigate, { to: "/login", replace: true });
   }
   return createElement(Outlet);

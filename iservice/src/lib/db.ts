@@ -120,13 +120,19 @@ export interface Session {
 
 export type Category = { name: string; emoji: string; slug: string };
 
+const STORES_KEY = "iservice_stores_v2";
+const BOOKINGS_KEY = "iservice_bookings_v2";
+const TICKETS_KEY = "iservice_tickets_v2";
+const SESSION_KEY = "iservice_session_v2";
+const CATEGORIES_KEY = "iservice_categories_v2";
+
 const KEYS = {
-  stores: "iservice_stores",
-  bookings: "iservice_bookings",
-  categories: "iservice_categories",
-  tickets: "iservice_tickets",
+  stores: STORES_KEY,
+  bookings: BOOKINGS_KEY,
+  categories: CATEGORIES_KEY,
+  tickets: TICKETS_KEY,
   storeTickets: "iservice_tickets_v1",
-  session: "iservice_session",
+  session: SESSION_KEY,
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -295,25 +301,36 @@ export type StoreLoginResult =
       reason: "invalid-credentials" | "pending" | "suspended" | "deactivated" | "unavailable";
     };
 
-export async function authenticateLojista(
-  username: string,
-  password: string,
-  loginId: string,
-): Promise<StoreLoginResult> {
-  const store = storeRepo.getByLoginId(loginId);
-  if (!store || store.username !== username) return { ok: false, reason: "invalid-credentials" };
-  const hash = await hashPassword(password);
-  if (hash !== store.passwordHash) return { ok: false, reason: "invalid-credentials" };
-  if (store.status === "pendente") return { ok: false, reason: "pending" };
-  if (store.status === "suspenso") return { ok: false, reason: "suspended" };
-  if (store.status === "desativado") return { ok: false, reason: "deactivated" };
-  if (store.availabilityStatus === "Inativo") return { ok: false, reason: "unavailable" };
-  return { ok: true, store };
+export async function authenticateLojista(loginId: string, username?: string, password?: string): Promise<Store | null> {
+  const cleanedLoginId = loginId.trim();
+  if (!cleanedLoginId) return null;
+
+  const store =
+    storeRepo.getByLoginId(cleanedLoginId) ??
+    storeRepo.getById(cleanedLoginId) ??
+    storeRepo.getAll().find((candidate) => candidate.loginId === cleanedLoginId || candidate.id === cleanedLoginId);
+
+  if (!store) return null;
+
+  if (username && username.trim().toLowerCase() !== store.username.trim().toLowerCase()) {
+    return null;
+  }
+
+  if (!password) return null;
+
+  const hash = await hashPassword(password.trim());
+  if (hash !== store.passwordHash) return null;
+
+  if (store.status === "pendente") return null;
+  if (store.status === "suspenso") return null;
+  if (store.status === "desativado") return null;
+  if (store.availabilityStatus === "Inativo") return null;
+
+  return store;
 }
 
 export async function loginLojista(username: string, password: string, loginId: string): Promise<Store | null> {
-  const result = await authenticateLojista(username, password, loginId);
-  return result.ok ? result.store : null;
+  return authenticateLojista(loginId, username, password);
 }
 
 export const bookingRepo = {
@@ -492,6 +509,6 @@ export const sessionRepo = {
 export function buildWhatsAppLink(phone: string, message: string): string {
   const digits = phone.replace(/\D/g, "");
   if (!digits) return "";
-  const phoneWithCountryCode = digits.startsWith("55") ? digits : `55${digits}`;
-  return `https://wa.me/${phoneWithCountryCode}?text=${encodeURIComponent(message)}`;
+  const targetPhone = digits.length <= 11 ? `55${digits}` : digits;
+  return `https://wa.me/${targetPhone}?text=${encodeURIComponent(message)}`;
 }

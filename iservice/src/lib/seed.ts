@@ -9,7 +9,7 @@ export function seedIfEmpty() {
 
   const barbearia: Store = {
     id: "barbearia-do-joao",
-    loginId: generateLoginId(),
+    loginId: "12345678",
     passwordHash: DEMO_PASSWORD_HASH,
     username: "joao",
     name: "Barbearia do João",
